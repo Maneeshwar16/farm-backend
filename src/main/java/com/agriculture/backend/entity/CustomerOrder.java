@@ -3,6 +3,7 @@ package com.agriculture.backend.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Entity
 @Table(name = "customer_orders")
@@ -39,21 +40,28 @@ public class CustomerOrder {
     private String orderStatus;
     private LocalDateTime createdAt;
 
+
     public CustomerOrder() {
     }
+
 
     @PrePersist
     public void beforeSave() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now();
+            createdAt = LocalDateTime.now(
+                    ZoneId.of("Asia/Kolkata")
+            );
         }
+
         if (paymentStatus == null) {
             paymentStatus = "PENDING";
         }
+
         if (orderStatus == null) {
             orderStatus = "PLACED";
         }
     }
+
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
