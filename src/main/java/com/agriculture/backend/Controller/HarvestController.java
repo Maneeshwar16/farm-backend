@@ -1,16 +1,20 @@
+
 package com.agriculture.backend.Controller;
+
 import com.agriculture.backend.entity.Crop;
 import com.agriculture.backend.entity.Harvest;
 import com.agriculture.backend.repository.CropRepository;
 import com.agriculture.backend.repository.HarvestRepository;
-
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+
 import java.util.List;
+
 @RestController
 @RequestMapping("/harvests")
-
+@CrossOrigin(origins = "http://localhost:5173")
 public class HarvestController {
 
     private final HarvestRepository harvestRepository;
@@ -23,9 +27,14 @@ public class HarvestController {
         this.cropRepository = cropRepository;
     }
 
-    // Save harvest details and update the crop status
     @PostMapping
+    @Transactional
     public Harvest addHarvest(@RequestBody Harvest harvest) {
+
+        if (harvest.getCropId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Crop ID is required");
+        }
 
         Crop crop = cropRepository.findById(harvest.getCropId())
                 .orElseThrow(() -> new ResponseStatusException(
@@ -53,35 +62,29 @@ public class HarvestController {
         harvest.setVariety(crop.getVariety());
         harvest.setPlantingDate(crop.getPlantingDate());
         harvest.setFarmerId(crop.getFarmerId());
-
         harvest.setRevenue(
                 harvest.getQuantity() * harvest.getSellingPrice()
         );
 
-        // Save harvest record
         Harvest savedHarvest = harvestRepository.save(harvest);
 
-        // Mark the crop as harvested
         crop.setCropStatus("Harvested");
         cropRepository.save(crop);
 
         return savedHarvest;
     }
 
-    // Get all harvest records
     @GetMapping
     public List<Harvest> getAllHarvests() {
         return harvestRepository.findAll();
     }
 
-    // Get harvests belonging to a farmer
     @GetMapping("/farmer/{farmerId}")
     public List<Harvest> getHarvestsByFarmer(
             @PathVariable Long farmerId) {
         return harvestRepository.findByFarmerId(farmerId);
     }
 
-    // Get a single harvest by ID
     @GetMapping("/{id}")
     public Harvest getHarvestById(@PathVariable Long id) {
         return harvestRepository.findById(id)
