@@ -9,7 +9,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/expenses")
-@CrossOrigin(origins = "http://localhost:5173")
 public class FarmerExpenseController {
 
     private final FarmerExpenseRepository expenseRepository;

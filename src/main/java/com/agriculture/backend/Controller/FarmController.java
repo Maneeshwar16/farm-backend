@@ -12,7 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/farms")
-@CrossOrigin(origins = "http://localhost:5173")
+
 public class FarmController {
 
     private final FarmRepository farmRepository;

@@ -13,7 +13,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/crops")
-@CrossOrigin(origins = "http://localhost:5173")
+
 public class CropController {
 
     private final CropRepository cropRepository;
