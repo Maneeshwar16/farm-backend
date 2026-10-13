@@ -9,6 +9,8 @@ import java.time.ZoneId;
 @Table(name = "customer_orders")
 public class CustomerOrder {
 
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -38,19 +40,16 @@ public class CustomerOrder {
     private String paymentMethod;
     private String paymentStatus;
     private String orderStatus;
-    private LocalDateTime createdAt;
 
+    private LocalDateTime createdAt;
 
     public CustomerOrder() {
     }
 
-
     @PrePersist
     public void beforeSave() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now(
-                    ZoneId.of("Asia/Kolkata")
-            );
+            createdAt = LocalDateTime.now(IST);
         }
 
         if (paymentStatus == null) {
@@ -62,71 +61,155 @@ public class CustomerOrder {
         }
     }
 
+    public Long getId() {
+        return id;
+    }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public void setId(Long id) {
+        this.id = id;
+    }
 
-    public Long getCustomerId() { return customerId; }
-    public void setCustomerId(Long customerId) { this.customerId = customerId; }
+    public Long getCustomerId() {
+        return customerId;
+    }
 
-    public String getCheckoutRequestId() { return checkoutRequestId; }
+    public void setCustomerId(Long customerId) {
+        this.customerId = customerId;
+    }
+
+    public String getCheckoutRequestId() {
+        return checkoutRequestId;
+    }
+
     public void setCheckoutRequestId(String checkoutRequestId) {
         this.checkoutRequestId = checkoutRequestId;
     }
 
-    public String getCustomerName() { return customerName; }
-    public void setCustomerName(String customerName) { this.customerName = customerName; }
+    public String getCustomerName() {
+        return customerName;
+    }
 
-    public String getPhone() { return phone; }
-    public void setPhone(String phone) { this.phone = phone; }
+    public void setCustomerName(String customerName) {
+        this.customerName = customerName;
+    }
 
-    public String getDeliveryAddress() { return deliveryAddress; }
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public String getDeliveryAddress() {
+        return deliveryAddress;
+    }
+
     public void setDeliveryAddress(String deliveryAddress) {
         this.deliveryAddress = deliveryAddress;
     }
 
-    public String getVillage() { return village; }
-    public void setVillage(String village) { this.village = village; }
+    public String getVillage() {
+        return village;
+    }
 
-    public String getDistrict() { return district; }
-    public void setDistrict(String district) { this.district = district; }
+    public void setVillage(String village) {
+        this.village = village;
+    }
 
-    public String getState() { return state; }
-    public void setState(String state) { this.state = state; }
+    public String getDistrict() {
+        return district;
+    }
 
-    public String getPincode() { return pincode; }
-    public void setPincode(String pincode) { this.pincode = pincode; }
+    public void setDistrict(String district) {
+        this.district = district;
+    }
 
-    public double getSubtotal() { return subtotal; }
-    public void setSubtotal(double subtotal) { this.subtotal = subtotal; }
+    public String getState() {
+        return state;
+    }
 
-    public double getDiscount() { return discount; }
-    public void setDiscount(double discount) { this.discount = discount; }
+    public void setState(String state) {
+        this.state = state;
+    }
 
-    public double getDeliveryCharge() { return deliveryCharge; }
+    public String getPincode() {
+        return pincode;
+    }
+
+    public void setPincode(String pincode) {
+        this.pincode = pincode;
+    }
+
+    public double getSubtotal() {
+        return subtotal;
+    }
+
+    public void setSubtotal(double subtotal) {
+        this.subtotal = subtotal;
+    }
+
+    public double getDiscount() {
+        return discount;
+    }
+
+    public void setDiscount(double discount) {
+        this.discount = discount;
+    }
+
+    public double getDeliveryCharge() {
+        return deliveryCharge;
+    }
+
     public void setDeliveryCharge(double deliveryCharge) {
         this.deliveryCharge = deliveryCharge;
     }
 
-    public double getTotalAmount() { return totalAmount; }
-    public void setTotalAmount(double totalAmount) { this.totalAmount = totalAmount; }
+    public double getTotalAmount() {
+        return totalAmount;
+    }
 
-    public String getCouponCode() { return couponCode; }
-    public void setCouponCode(String couponCode) { this.couponCode = couponCode; }
+    public void setTotalAmount(double totalAmount) {
+        this.totalAmount = totalAmount;
+    }
 
-    public String getPaymentMethod() { return paymentMethod; }
+    public String getCouponCode() {
+        return couponCode;
+    }
+
+    public void setCouponCode(String couponCode) {
+        this.couponCode = couponCode;
+    }
+
+    public String getPaymentMethod() {
+        return paymentMethod;
+    }
+
     public void setPaymentMethod(String paymentMethod) {
         this.paymentMethod = paymentMethod;
     }
 
-    public String getPaymentStatus() { return paymentStatus; }
+    public String getPaymentStatus() {
+        return paymentStatus;
+    }
+
     public void setPaymentStatus(String paymentStatus) {
         this.paymentStatus = paymentStatus;
     }
 
-    public String getOrderStatus() { return orderStatus; }
-    public void setOrderStatus(String orderStatus) { this.orderStatus = orderStatus; }
+    public String getOrderStatus() {
+        return orderStatus;
+    }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setOrderStatus(String orderStatus) {
+        this.orderStatus = orderStatus;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
 }
