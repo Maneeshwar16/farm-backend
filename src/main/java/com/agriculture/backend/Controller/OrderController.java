@@ -13,11 +13,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 @RestController
 @RequestMapping("/orders")
 public class OrderController {
+
+    private static final ZoneId IST =
+            ZoneId.of("Asia/Kolkata");
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -33,6 +38,10 @@ public class OrderController {
         this.productRepository = productRepository;
     }
 
+    // =========================================================
+    // PLACE ORDER
+    // =========================================================
+
     @PostMapping
     @Transactional
     public ResponseEntity<?> placeOrder(
@@ -44,33 +53,53 @@ public class OrderController {
 
             if (customerIdValue == null || requestIdValue == null) {
                 return ResponseEntity.badRequest().body(
-                        Map.of("message",
-                                "Customer ID and checkout request ID are required."));
+                        Map.of(
+                                "message",
+                                "Customer ID and checkout request ID are required."
+                        )
+                );
             }
 
-            Long customerId = Long.valueOf(customerIdValue.toString());
-            String checkoutRequestId = requestIdValue.toString().trim();
+            Long customerId =
+                    Long.valueOf(customerIdValue.toString());
+
+            String checkoutRequestId =
+                    requestIdValue.toString().trim();
 
             if (checkoutRequestId.isBlank()) {
                 return ResponseEntity.badRequest().body(
-                        Map.of("message", "Checkout request ID is required."));
+                        Map.of(
+                                "message",
+                                "Checkout request ID is required."
+                        )
+                );
             }
 
+            // Prevent duplicate checkout requests.
             Optional<CustomerOrder> existingOrder =
-                    orderRepository.findByCheckoutRequestId(checkoutRequestId);
+                    orderRepository.findByCheckoutRequestId(
+                            checkoutRequestId
+                    );
 
             if (existingOrder.isPresent()) {
                 CustomerOrder order = existingOrder.get();
 
-                if (!Objects.equals(order.getCustomerId(), customerId)) {
-                    return ResponseEntity.status(HttpStatus.CONFLICT).body(
-                            Map.of("message",
-                                    "This checkout request belongs to another customer."));
+                if (!Objects.equals(
+                        order.getCustomerId(), customerId)) {
+
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(Map.of(
+                                    "message",
+                                    "This checkout request belongs to another customer."
+                            ));
                 }
 
                 Map<String, Object> response = new HashMap<>();
-                response.put("message",
-                        "Order already placed. No duplicate order was created.");
+
+                response.put(
+                        "message",
+                        "Order already placed. No duplicate order was created."
+                );
                 response.put("orderId", order.getId());
                 response.put("alreadyPlaced", true);
                 response.put("subtotal", order.getSubtotal());
@@ -91,16 +120,30 @@ public class OrderController {
 
             if (address == null || items == null || items.isEmpty()) {
                 return ResponseEntity.badRequest().body(
-                        Map.of("message",
-                                "Address and order items are required."));
+                        Map.of(
+                                "message",
+                                "Address and order items are required."
+                        )
+                );
             }
 
-            String phone = String.valueOf(address.get("phone"));
-            String deliveryAddress = String.valueOf(address.get("address"));
-            String village = String.valueOf(address.get("village"));
-            String district = String.valueOf(address.get("district"));
-            String state = String.valueOf(address.get("state"));
-            String pincode = String.valueOf(address.get("pincode"));
+            String phone =
+                    String.valueOf(address.get("phone"));
+
+            String deliveryAddress =
+                    String.valueOf(address.get("address"));
+
+            String village =
+                    String.valueOf(address.get("village"));
+
+            String district =
+                    String.valueOf(address.get("district"));
+
+            String state =
+                    String.valueOf(address.get("state"));
+
+            String pincode =
+                    String.valueOf(address.get("pincode"));
 
             if (!phone.matches("^[6-9][0-9]{9}$")
                     || deliveryAddress.isBlank()
@@ -110,63 +153,97 @@ public class OrderController {
                     || !pincode.matches("^[1-9][0-9]{5}$")) {
 
                 return ResponseEntity.badRequest().body(
-                        Map.of("message",
-                                "Please provide a valid delivery address."));
+                        Map.of(
+                                "message",
+                                "Please provide a valid delivery address."
+                        )
+                );
             }
 
-            String paymentMethod = String.valueOf(request.get("paymentMethod"));
+            String paymentMethod =
+                    String.valueOf(request.get("paymentMethod"));
 
-            if (!List.of("COD", "QR", "BANK", "DEMO").contains(paymentMethod)) {
+            if (!List.of("COD", "QR", "BANK", "DEMO")
+                    .contains(paymentMethod)) {
+
                 return ResponseEntity.badRequest().body(
-                        Map.of("message", "Invalid payment method."));
+                        Map.of(
+                                "message",
+                                "Invalid payment method."
+                        )
+                );
             }
 
-            String couponCode = request.get("couponCode") == null
-                    ? ""
-                    : request.get("couponCode").toString()
-                    .trim().toUpperCase();
+            String couponCode =
+                    request.get("couponCode") == null
+                            ? ""
+                            : request.get("couponCode")
+                            .toString()
+                            .trim()
+                            .toUpperCase(Locale.ROOT);
 
             double subtotal = 0;
-            List<OrderItem> orderItems = new ArrayList<>();
-            Map<Long, Integer> requestedQuantities = new HashMap<>();
 
+            List<OrderItem> orderItems = new ArrayList<>();
+
+            Map<Long, Integer> requestedQuantities =
+                    new HashMap<>();
+
+            // Validate products and prepare order items.
             for (Map<String, Object> item : items) {
+
                 if (item.get("productId") == null
                         || item.get("quantity") == null) {
+
                     return ResponseEntity.badRequest().body(
-                            Map.of("message",
-                                    "Product ID and quantity are required."));
+                            Map.of(
+                                    "message",
+                                    "Product ID and quantity are required."
+                            )
+                    );
                 }
 
-                Long productId = Long.valueOf(
-                        item.get("productId").toString());
+                Long productId =
+                        Long.valueOf(item.get("productId").toString());
 
-                int quantity = Integer.parseInt(
-                        item.get("quantity").toString());
+                int quantity =
+                        Integer.parseInt(item.get("quantity").toString());
 
                 if (quantity <= 0) {
                     return ResponseEntity.badRequest().body(
-                            Map.of("message",
-                                    "Product quantity must be positive."));
+                            Map.of(
+                                    "message",
+                                    "Product quantity must be positive."
+                            )
+                    );
                 }
 
-                Product product = productRepository.findById(productId)
+                Product product = productRepository
+                        .findById(productId)
                         .orElse(null);
 
                 if (product == null) {
                     return ResponseEntity.badRequest().body(
-                            Map.of("message",
-                                    "A selected product does not exist."));
+                            Map.of(
+                                    "message",
+                                    "A selected product does not exist."
+                            )
+                    );
                 }
 
                 requestedQuantities.merge(
-                        productId, quantity, Integer::sum);
+                        productId,
+                        quantity,
+                        Integer::sum
+                );
 
                 double price = product.getPrice();
                 double itemTotal = price * quantity;
+
                 subtotal += itemTotal;
 
                 OrderItem orderItem = new OrderItem();
+
                 orderItem.setProductId(product.getId());
                 orderItem.setProductName(product.getProductName());
                 orderItem.setFarmerId(product.getFarmerId());
@@ -177,35 +254,47 @@ public class OrderController {
                 orderItems.add(orderItem);
             }
 
+            // Check stock before deducting anything.
             for (Map.Entry<Long, Integer> entry
                     : requestedQuantities.entrySet()) {
 
                 Product product = productRepository
-                        .findById(entry.getKey()).orElseThrow();
+                        .findById(entry.getKey())
+                        .orElseThrow();
 
                 if (entry.getValue() > product.getQuantity()) {
-                    return ResponseEntity.status(HttpStatus.CONFLICT).body(
-                            Map.of("message",
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(Map.of(
+                                    "message",
                                     "Insufficient stock for "
-                                            + product.getProductName()));
+                                            + product.getProductName()
+                            ));
                 }
             }
 
             double discount = 0;
 
             if (!couponCode.isEmpty()) {
+
                 if (!couponCode.equals("FARM10")) {
                     return ResponseEntity.badRequest().body(
-                            Map.of("message", "Invalid coupon code."));
+                            Map.of(
+                                    "message",
+                                    "Invalid coupon code."
+                            )
+                    );
                 }
 
                 discount = subtotal * 0.10;
             }
 
             double deliveryCharge = 0;
-            double total = subtotal + deliveryCharge - discount;
+
+            double total =
+                    subtotal + deliveryCharge - discount;
 
             CustomerOrder order = new CustomerOrder();
+
             order.setCustomerId(customerId);
             order.setCheckoutRequestId(checkoutRequestId);
             order.setPhone(phone);
@@ -223,26 +312,31 @@ public class OrderController {
             order.setPaymentStatus("PENDING");
             order.setOrderStatus("PLACED");
 
-            CustomerOrder savedOrder = orderRepository.saveAndFlush(order);
+            CustomerOrder savedOrder =
+                    orderRepository.saveAndFlush(order);
 
             for (OrderItem item : orderItems) {
                 item.setOrderId(savedOrder.getId());
                 orderItemRepository.save(item);
             }
 
+            // Deduct stock after validating all requested quantities.
             for (Map.Entry<Long, Integer> entry
                     : requestedQuantities.entrySet()) {
 
                 Product product = productRepository
-                        .findById(entry.getKey()).orElseThrow();
+                        .findById(entry.getKey())
+                        .orElseThrow();
 
                 product.setQuantity(
-                        product.getQuantity() - entry.getValue());
+                        product.getQuantity() - entry.getValue()
+                );
 
                 productRepository.save(product);
             }
 
             Map<String, Object> response = new HashMap<>();
+
             response.put("message", "Order placed successfully.");
             response.put("orderId", savedOrder.getId());
             response.put("alreadyPlaced", false);
@@ -253,18 +347,30 @@ public class OrderController {
             response.put("paymentStatus", savedOrder.getPaymentStatus());
             response.put("orderStatus", savedOrder.getOrderStatus());
 
-            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(response);
 
         } catch (org.springframework.dao.DataIntegrityViolationException exception) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(
-                    Map.of("message",
-                            "This checkout was already submitted. Please check My Orders."));
+
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                            "message",
+                            "This checkout was already submitted. Please check My Orders."
+                    ));
+
         } catch (Exception exception) {
-            return ResponseEntity.badRequest().body(
-                    Map.of("message",
-                            "Unable to place order. Check the submitted details."));
+
+            return ResponseEntity.badRequest()
+                    .body(Map.of(
+                            "message",
+                            "Unable to place order. Check the submitted details."
+                    ));
         }
     }
+
+    // =========================================================
+    // CUSTOMER ORDERS
+    // =========================================================
 
     @GetMapping("/customer/{customerId}")
     public List<CustomerOrder> getCustomerOrders(
@@ -272,6 +378,10 @@ public class OrderController {
 
         return orderRepository.findByCustomerId(customerId);
     }
+
+    // =========================================================
+    // ITEMS FOR AN ORDER
+    // =========================================================
 
     @GetMapping("/{orderId}/items")
     public ResponseEntity<?> getOrderItems(
@@ -282,14 +392,20 @@ public class OrderController {
         }
 
         return ResponseEntity.ok(
-                orderItemRepository.findByOrderId(orderId));
+                orderItemRepository.findByOrderId(orderId)
+        );
     }
+
+    // =========================================================
+    // ORDERS BELONGING TO A FARMER
+    // =========================================================
 
     @GetMapping("/farmer/{farmerId}")
     public ResponseEntity<?> getFarmerOrders(
             @PathVariable Long farmerId) {
 
-        List<Map<String, Object>> farmerOrders = new ArrayList<>();
+        List<Map<String, Object>> farmerOrders =
+                new ArrayList<>();
 
         for (CustomerOrder order : orderRepository.findAll()) {
 
@@ -298,7 +414,8 @@ public class OrderController {
 
             List<OrderItem> farmerItems = allItems.stream()
                     .filter(item ->
-                            Objects.equals(item.getFarmerId(), farmerId))
+                            Objects.equals(
+                                    item.getFarmerId(), farmerId))
                     .toList();
 
             if (farmerItems.isEmpty()) {
@@ -306,12 +423,14 @@ public class OrderController {
             }
 
             Map<String, Object> result = new HashMap<>();
+
             result.put("orderId", order.getId());
             result.put("customerId", order.getCustomerId());
             result.put("orderStatus", order.getOrderStatus());
             result.put("paymentStatus", order.getPaymentStatus());
             result.put("paymentMethod", order.getPaymentMethod());
             result.put("createdAt", order.getCreatedAt());
+            result.put("cancelledAt", order.getCancelledAt());
             result.put("phone", order.getPhone());
             result.put("deliveryAddress", order.getDeliveryAddress());
             result.put("village", order.getVillage());
@@ -325,6 +444,7 @@ public class OrderController {
                     .sum();
 
             result.put("farmerSubtotal", farmerSubtotal);
+
             farmerOrders.add(result);
         }
 
@@ -332,10 +452,15 @@ public class OrderController {
                 Long.compare(
                         ((Number) second.get("orderId")).longValue(),
                         ((Number) first.get("orderId")).longValue()
-                ));
+                )
+        );
 
         return ResponseEntity.ok(farmerOrders);
     }
+
+    // =========================================================
+    // FARMER ORDER SUMMARY
+    // =========================================================
 
     @GetMapping("/farmer/{farmerId}/summary")
     public ResponseEntity<?> getFarmerOrderSummary(
@@ -344,49 +469,81 @@ public class OrderController {
         int newOrders = 0;
         int pendingOrders = 0;
         int deliveredOrders = 0;
+        int cancelledOrders = 0;
+        int processingOrders = 0;
+        int shippedOrders = 0;
         int totalOrders = 0;
+
+        double deliveredRevenue = 0;
+        double allOrderValue = 0;
 
         for (CustomerOrder order : orderRepository.findAll()) {
 
             List<OrderItem> items =
                     orderItemRepository.findByOrderId(order.getId());
 
-            boolean belongsToFarmer = items.stream()
-                    .anyMatch(item ->
-                            Objects.equals(item.getFarmerId(), farmerId));
+            List<OrderItem> farmerItems = items.stream()
+                    .filter(item ->
+                            Objects.equals(
+                                    item.getFarmerId(), farmerId))
+                    .toList();
 
-            if (!belongsToFarmer) {
+            if (farmerItems.isEmpty()) {
                 continue;
             }
 
             totalOrders++;
 
+            double farmerSubtotal = farmerItems.stream()
+                    .mapToDouble(OrderItem::getTotalPrice)
+                    .sum();
+
             String status = order.getOrderStatus() == null
                     ? ""
-                    : order.getOrderStatus().toUpperCase();
+                    : order.getOrderStatus()
+                    .trim()
+                    .toUpperCase(Locale.ROOT);
 
-            if (status.equals("PLACED")) {
-                newOrders++;
+            allOrderValue += farmerSubtotal;
+
+            switch (status) {
+                case "PLACED" -> newOrders++;
+                case "PROCESSING" -> processingOrders++;
+                case "SHIPPED" -> shippedOrders++;
+                case "DELIVERED" -> {
+                    deliveredOrders++;
+                    deliveredRevenue += farmerSubtotal;
+                }
+                case "CANCELLED" -> cancelledOrders++;
+                default -> {
+                    // Unknown statuses remain included in totalOrders.
+                }
             }
 
             if (!status.equals("DELIVERED")
                     && !status.equals("CANCELLED")) {
                 pendingOrders++;
             }
-
-            if (status.equals("DELIVERED")) {
-                deliveredOrders++;
-            }
         }
 
-        Map<String, Object> summary = new HashMap<>();
+        Map<String, Object> summary = new LinkedHashMap<>();
+
         summary.put("newOrders", newOrders);
         summary.put("pendingOrders", pendingOrders);
+        summary.put("processingOrders", processingOrders);
+        summary.put("shippedOrders", shippedOrders);
         summary.put("deliveredOrders", deliveredOrders);
+        summary.put("cancelledOrders", cancelledOrders);
         summary.put("totalOrders", totalOrders);
+        summary.put("allOrderItemValue", allOrderValue);
+        summary.put("deliveredItemValue", deliveredRevenue);
 
         return ResponseEntity.ok(summary);
     }
+
+    // =========================================================
+    // UPDATE FARMER ORDER STATUS / CANCEL ORDER
+    // =========================================================
 
     @PutMapping("/farmer/{farmerId}/{orderId}/status")
     @Transactional
@@ -407,7 +564,8 @@ public class OrderController {
 
         boolean belongsToFarmer = items.stream()
                 .anyMatch(item ->
-                        Objects.equals(item.getFarmerId(), farmerId));
+                        Objects.equals(
+                                item.getFarmerId(), farmerId));
 
         if (!belongsToFarmer) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -419,12 +577,19 @@ public class OrderController {
 
         String requestedStatus = request.get("status");
 
-        if (requestedStatus == null || requestedStatus.isBlank()) {
+        if (requestedStatus == null
+                || requestedStatus.isBlank()) {
+
             return ResponseEntity.badRequest().body(
-                    Map.of("message", "Order status is required."));
+                    Map.of(
+                            "message",
+                            "Order status is required."
+                    )
+            );
         }
 
-        String newStatus = requestedStatus.trim().toUpperCase();
+        String newStatus =
+                requestedStatus.trim().toUpperCase(Locale.ROOT);
 
         if (!List.of(
                 "PROCESSING",
@@ -432,60 +597,100 @@ public class OrderController {
                 "DELIVERED",
                 "CANCELLED"
         ).contains(newStatus)) {
+
             return ResponseEntity.badRequest().body(
-                    Map.of("message",
-                            "Invalid status. Choose PROCESSING, SHIPPED, DELIVERED or CANCELLED."));
+                    Map.of(
+                            "message",
+                            "Invalid status. Choose PROCESSING, SHIPPED, DELIVERED or CANCELLED."
+                    )
+            );
         }
 
         String currentStatus = order.getOrderStatus() == null
                 ? ""
-                : order.getOrderStatus().trim().toUpperCase();
+                : order.getOrderStatus()
+                .trim()
+                .toUpperCase(Locale.ROOT);
 
+        // Prevent repeated cancellation and stock restoration.
         if (currentStatus.equals("CANCELLED")) {
+
             if (newStatus.equals("CANCELLED")) {
-                return ResponseEntity.ok(Map.of(
+                Map<String, Object> response = new HashMap<>();
+
+                response.put(
                         "message",
-                        "Order is already cancelled. Stock was not restored again.",
-                        "orderId", order.getId(),
-                        "orderStatus", currentStatus
-                ));
+                        "Order is already cancelled. Stock was not restored again."
+                );
+                response.put("orderId", order.getId());
+                response.put("orderStatus", currentStatus);
+                response.put("cancelledAt", order.getCancelledAt());
+
+                return ResponseEntity.ok(response);
             }
 
             return ResponseEntity.badRequest().body(
-                    Map.of("message",
-                            "A cancelled order cannot be updated."));
+                    Map.of(
+                            "message",
+                            "A cancelled order cannot be updated."
+                    )
+            );
         }
 
         if (currentStatus.equals("DELIVERED")
                 && newStatus.equals("CANCELLED")) {
+
             return ResponseEntity.badRequest().body(
-                    Map.of("message",
-                            "A delivered order cannot be cancelled."));
+                    Map.of(
+                            "message",
+                            "A delivered order cannot be cancelled."
+                    )
+            );
         }
 
+        // Restore stock and record cancellation time exactly once.
         if (newStatus.equals("CANCELLED")) {
+
             for (OrderItem item : items) {
+
                 Product product = productRepository
                         .findById(item.getProductId())
                         .orElse(null);
 
                 if (product != null) {
                     product.setQuantity(
-                            product.getQuantity() + item.getQuantity());
+                            product.getQuantity() + item.getQuantity()
+                    );
+
                     productRepository.save(product);
                 }
             }
+
+            order.setCancelledAt(LocalDateTime.now(IST));
+
+        } else {
+            // Clear the cancellation timestamp if an order is
+            // transitioned to another permitted status.
+            order.setCancelledAt(null);
         }
 
         order.setOrderStatus(newStatus);
-        orderRepository.save(order);
 
-        return ResponseEntity.ok(Map.of(
-                "message", newStatus.equals("CANCELLED")
+        CustomerOrder savedOrder =
+                orderRepository.save(order);
+
+        Map<String, Object> response = new HashMap<>();
+
+        response.put(
+                "message",
+                newStatus.equals("CANCELLED")
                         ? "Order cancelled and stock restored successfully."
-                        : "Order status updated successfully.",
-                "orderId", order.getId(),
-                "orderStatus", order.getOrderStatus()
-        ));
+                        : "Order status updated successfully."
+        );
+        response.put("orderId", savedOrder.getId());
+        response.put("orderStatus", savedOrder.getOrderStatus());
+        response.put("cancelledAt", savedOrder.getCancelledAt());
+
+        return ResponseEntity.ok(response);
     }
 }

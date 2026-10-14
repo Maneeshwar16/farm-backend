@@ -36,12 +36,14 @@ public class CustomerOrder {
     private double deliveryCharge;
     private double totalAmount;
 
+
     private String couponCode;
     private String paymentMethod;
     private String paymentStatus;
     private String orderStatus;
 
     private LocalDateTime createdAt;
+    private LocalDateTime cancelledAt;
 
     public CustomerOrder() {
     }
@@ -211,5 +213,12 @@ public class CustomerOrder {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+    public LocalDateTime getCancelledAt() {
+        return cancelledAt;
+    }
+
+    public void setCancelledAt(LocalDateTime cancelledAt) {
+        this.cancelledAt = cancelledAt;
     }
 }

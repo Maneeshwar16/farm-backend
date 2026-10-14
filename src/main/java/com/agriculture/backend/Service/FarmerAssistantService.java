@@ -989,37 +989,16 @@ public class FarmerAssistantService {
         return null;
     }
 
-
     private boolean isExpenseSummaryQuestion(String text) {
-        boolean asksForTotal =
-                text.contains("how much")
-                        || text.contains("how much did i spend")
-                        || text.contains("total spent")
-                        || text.contains("total expense")
-                        || text.contains("total expenses")
-                        || text.contains("expenses so far")
-                        || text.contains("expense total")
-                        || text.contains("expense summary")
-                        || text.contains("spending")
-                        || text.contains("expenditure");
-
-        boolean mentionsExpense =
-                text.contains("spend")
-                        || text.contains("spent")
-                        || text.contains("expense")
-                        || text.contains("fertilizer")
-                        || text.contains("fertiliser")
-                        || text.contains("seed")
-                        || text.contains("pesticide")
-                        || text.contains("labour")
-                        || text.contains("labor")
-                        || text.contains("worker")
-                        || text.contains("irrigation")
-                        || text.contains("water");
-
-        return asksForTotal && mentionsExpense;
+        return (text.contains("how much") || text.contains("total spent")
+                || text.contains("total expense")
+                || text.contains("expenses so far")
+                || text.contains("expense total"))
+                && (text.contains("spent") || text.contains("expense")
+                || text.contains("fertilizer") || text.contains("fertiliser")
+                || text.contains("seed") || text.contains("pesticide")
+                || text.contains("labour") || text.contains("labor"));
     }
-
 
     private boolean isStockQuestion(String text) {
         return (text.contains("stock") || text.contains("inventory")
