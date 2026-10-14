@@ -94,4 +94,32 @@ public class CropController {
 
         return cropRepository.save(updatedCrop);
     }
+
+    // Delete a crop by ID
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteCrop(@PathVariable Long id) {
+        if (!cropRepository.existsById(id)) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Crop not found with ID: " + id);
+        }
+        cropRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // Delete crop by farmerId and id (extra check to ensure farmer ownership)
+    @DeleteMapping("/farmer/{farmerId}/{id}")
+    public ResponseEntity<Void> deleteCropByFarmer(
+            @PathVariable Long farmerId,
+            @PathVariable Long id) {
+        Crop crop = cropRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Crop not found with ID: " + id));
+
+        if (!crop.getFarmerId().equals(farmerId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN, "Crop does not belong to farmer " + farmerId);
+        }
+        cropRepository.delete(crop);
+        return ResponseEntity.noContent().build();
+    }
 }

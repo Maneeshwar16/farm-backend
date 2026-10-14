@@ -43,4 +43,22 @@ public class FarmController {
 
         return farmRepository.findByFarmerId(farmerId);
     }
+
+    // Get a farm by ID
+    @GetMapping("/{id}")
+    public Farm getFarmById(@PathVariable Long id) {
+        return farmRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Farm not found with ID: " + id));
+    }
+
+    // Delete a farm by ID
+    @DeleteMapping("/{id}")
+    public void deleteFarm(@PathVariable Long id) {
+        if (!farmRepository.existsById(id)) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Farm not found with ID: " + id);
+        }
+        farmRepository.deleteById(id);
+    }
 }
