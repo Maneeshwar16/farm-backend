@@ -1,14 +1,13 @@
-
 package com.agriculture.backend.Service;
 import com.agriculture.backend.dto.AssistantResponse;
 import com.agriculture.backend.entity.Crop;
 import com.agriculture.backend.entity.FarmerExpense;
 import com.agriculture.backend.repository.CropRepository;
 import com.agriculture.backend.repository.FarmerExpenseRepository;
-
 import org.springframework.stereotype.Service;
-
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,6 +51,12 @@ public class FarmerAssistantService {
         if (conversationId != null && !conversationId.isBlank()) {
             conversation = conversations.get(conversationId);
 
+            System.out.println(
+                    "Assistant conversation lookup: id=" + conversationId
+                            + ", found=" + (conversation != null)
+                            + ", activeConversations=" + conversations.size()
+            );
+
             if (conversation != null
                     && !conversation.farmerId.equals(farmerId)) {
                 return response(
@@ -72,20 +77,29 @@ public class FarmerAssistantService {
             );
         }
 
-        // Continue an existing conversation.
         if (conversation != null) {
-            if (confirmed) {
+            String answer = message == null ? "" : message.trim();
+
+            if (isNo(answer)) {
+                conversations.remove(conversationId);
+
+                return response(
+                        "CANCELLED",
+                        "Cancelled. Nothing was saved."
+                );
+            }
+
+            if (confirmed || isYes(answer)) {
                 return confirmAction(conversation, conversationId);
             }
 
             return continueConversation(
                     conversation,
-                    message,
+                    answer,
                     conversationId
             );
         }
 
-        // Start a new conversation.
         AssistantResponse parsed = parser.parse(message);
 
         if ("CROP_CREATE".equals(parsed.getIntent())) {
@@ -102,18 +116,18 @@ public class FarmerAssistantService {
             Conversation expenseConversation =
                     new Conversation(farmerId, "EXPENSE");
 
-            expenseConversation.data.put("amount", parsed.getAmount());
+            expenseConversation.step = "CONFIRM_EXPENSE";
             expenseConversation.data.put(
-                    "category",
-                    parsed.getCategory()
+                    "amount", parsed.getAmount()
             );
             expenseConversation.data.put(
-                    "description",
-                    message.trim()
+                    "category", parsed.getCategory()
+            );
+            expenseConversation.data.put(
+                    "description", message.trim()
             );
 
             String id = UUID.randomUUID().toString();
-
             conversations.put(id, expenseConversation);
 
             parsed.setConversationId(id);
@@ -125,8 +139,8 @@ public class FarmerAssistantService {
         if ("HARVEST".equals(parsed.getIntent())) {
             return response(
                     "HARVEST",
-                    "Harvest conversation will be added next. " +
-                            "For now, please use your existing harvest form."
+                    "Harvest recording is not implemented in this assistant yet. " +
+                            "Please use your existing harvest form."
             );
         }
 
@@ -134,8 +148,8 @@ public class FarmerAssistantService {
                 || "PRODUCT_DELETE".equals(parsed.getIntent())) {
             return response(
                     parsed.getIntent(),
-                    "Product conversation will be added next. " +
-                            "For now, please use your existing product page."
+                    "Product management is not implemented in this assistant yet. " +
+                            "Please use your existing product page."
             );
         }
 
@@ -143,48 +157,31 @@ public class FarmerAssistantService {
     }
 
     private AssistantResponse startCropConversation(Long farmerId) {
-
         Conversation conversation =
                 new Conversation(farmerId, "CROP_CREATE");
 
-        String id = UUID.randomUUID().toString();
-
         conversation.step = "CROP_NAME";
+
+        String id = UUID.randomUUID().toString();
         conversations.put(id, conversation);
 
-        AssistantResponse result = response(
-                "CROP_CREATE",
-                "Let's add your crop! 🌱\n\n" +
-                        "1. What crop do you want to plant?"
+        return question(
+                conversation,
+                id,
+                "Let's add your crop! 🌱 What crop do you want to plant?"
         );
-
-        result.setConversationId(id);
-        result.setNextStep("CROP_NAME");
-
-        return result;
     }
 
     private AssistantResponse continueConversation(
             Conversation conversation,
-            String message,
+            String answer,
             String conversationId) {
 
-        String answer = message == null ? "" : message.trim();
-
-        if (answer.isBlank()) {
+        if (answer == null || answer.isBlank()) {
             return askCurrentQuestion(conversation, conversationId);
         }
 
-        if (isCancelMessage(answer)) {
-            conversations.remove(conversationId);
-
-            return response(
-                    "CANCELLED",
-                    "No changes were saved. Your conversation was cancelled."
-            );
-        }
-
-        if (conversation.step.startsWith("CROP_")) {
+        if ("CROP_CREATE".equals(conversation.intent)) {
             return collectCropAnswer(
                     conversation,
                     answer,
@@ -192,7 +189,18 @@ public class FarmerAssistantService {
             );
         }
 
-        return askCurrentQuestion(conversation, conversationId);
+        if ("EXPENSE".equals(conversation.intent)) {
+            return question(
+                    conversation,
+                    conversationId,
+                    "Please confirm the expense. Reply YES to save or NO to cancel."
+            );
+        }
+
+        return response(
+                "UNKNOWN",
+                "I couldn't continue this conversation. Please start again."
+        );
     }
 
     private AssistantResponse collectCropAnswer(
@@ -212,7 +220,7 @@ public class FarmerAssistantService {
                     return question(
                             conversation,
                             conversationId,
-                            "Please enter a valid date in YYYY-MM-DD format."
+                            "Please enter a valid planting date in YYYY-MM-DD format."
                     );
                 }
 
@@ -241,21 +249,24 @@ public class FarmerAssistantService {
                 break;
 
             case "AREA_UNIT":
-                String unit = answer.toLowerCase();
+                String unit = answer.toLowerCase(Locale.ROOT);
 
                 if (unit.contains("acre")) {
                     conversation.data.put("areaUnit", "Acre");
                 } else if (unit.contains("hectare")) {
                     conversation.data.put("areaUnit", "Hectare");
-                } else if (unit.contains("cent")) {
+                } else if (unit.equals("cent")
+                        || unit.equals("cents")) {
                     conversation.data.put("areaUnit", "Cent");
-                } else if (unit.contains("sq")) {
+                } else if (unit.contains("square meter")
+                        || unit.equals("sqm")
+                        || unit.equals("sq m")) {
                     conversation.data.put("areaUnit", "Square Meter");
                 } else {
                     return question(
                             conversation,
                             conversationId,
-                            "Please enter the unit: acre, hectare, cent, or square meter."
+                            "Enter the area unit: acre, hectare, cent, or square meter."
                     );
                 }
 
@@ -296,10 +307,26 @@ public class FarmerAssistantService {
 
                 return cropConfirmation(conversation, conversationId);
 
+            case "CONFIRM_CROP":
+                if (isYes(answer)) {
+                    return confirmAction(conversation, conversationId);
+                }
+
+                if (isNo(answer)) {
+                    conversations.remove(conversationId);
+
+                    return response(
+                            "CANCELLED",
+                            "Crop creation cancelled. Nothing was saved."
+                    );
+                }
+
+                return cropConfirmation(conversation, conversationId);
+
             default:
                 return response(
                         "UNKNOWN",
-                        "I couldn't continue this crop conversation. Please start again."
+                        "The conversation step is invalid. Please start again."
                 );
         }
 
@@ -328,11 +355,13 @@ public class FarmerAssistantService {
                 break;
 
             case "AREA":
-                prompt = "How much land will you use? Enter the number only, such as 0.5.";
+                prompt = "How much land will you use? " +
+                        "Enter the number only, such as 0.5.";
                 break;
 
             case "AREA_UNIT":
-                prompt = "What is the land area unit? Enter acre, hectare, cent, or square meter.";
+                prompt = "What is the land area unit? " +
+                        "Enter acre, hectare, cent, or square meter.";
                 break;
 
             case "VARIETY":
@@ -362,6 +391,13 @@ public class FarmerAssistantService {
             case "CONFIRM_CROP":
                 return cropConfirmation(conversation, conversationId);
 
+            case "CONFIRM_EXPENSE":
+                return question(
+                        conversation,
+                        conversationId,
+                        "Please confirm the expense. Reply YES to save or NO to cancel."
+                );
+
             default:
                 prompt = "Please provide your answer.";
         }
@@ -373,31 +409,30 @@ public class FarmerAssistantService {
             Conversation conversation,
             String conversationId) {
 
-        Map<String, Object> d = conversation.data;
+        Map<String, Object> data = conversation.data;
 
         String summary =
                 "Please review your crop details:\n\n" +
-                        "Crop: " + d.get("cropName") + "\n" +
-                        "Planting date: " + d.get("plantingDate") + "\n" +
-                        "Soil: " + d.get("soilType") + "\n" +
-                        "Land area: " + d.get("area") + " " +
-                        d.get("areaUnit") + "\n" +
-                        "Variety: " + d.get("variety") + "\n" +
-                        "Seed source: " + d.get("seedSource") + "\n" +
-                        "Fertilizer: " + d.get("fertilizerUsed") + "\n" +
-                        "Irrigation: " + d.get("irrigationMethod") + "\n" +
-                        "Expected harvest: " + d.get("expectedHarvestDate") +
+                        "Crop: " + data.get("cropName") + "\n" +
+                        "Planting date: " + data.get("plantingDate") + "\n" +
+                        "Soil: " + data.get("soilType") + "\n" +
+                        "Land area: " + data.get("area") + " " +
+                        data.get("areaUnit") + "\n" +
+                        "Variety: " + data.get("variety") + "\n" +
+                        "Seed source: " + data.get("seedSource") + "\n" +
+                        "Fertilizer: " + data.get("fertilizerUsed") + "\n" +
+                        "Irrigation: " + data.get("irrigationMethod") + "\n" +
+                        "Expected harvest: " + data.get("expectedHarvestDate") +
                         "\n\nReply YES to save or NO to cancel.";
 
-        AssistantResponse result = response(
-                "CROP_CREATE",
+        AssistantResponse result = question(
+                conversation,
+                conversationId,
                 summary
         );
 
-        result.setConversationId(conversationId);
         result.setRequiresConfirmation(true);
         result.setNextStep("CONFIRM_CROP");
-        result.setData(d);
 
         return result;
     }
@@ -407,10 +442,13 @@ public class FarmerAssistantService {
             String conversationId) {
 
         if ("EXPENSE".equals(conversation.intent)) {
-
             Object amountValue = conversation.data.get("amount");
+            Object categoryValue = conversation.data.get("category");
+            Object descriptionValue = conversation.data.get("description");
 
-            if (!(amountValue instanceof Number)) {
+            if (!(amountValue instanceof Number)
+                    || categoryValue == null
+                    || descriptionValue == null) {
                 conversations.remove(conversationId);
 
                 return response(
@@ -419,31 +457,40 @@ public class FarmerAssistantService {
                 );
             }
 
+            double amount = ((Number) amountValue).doubleValue();
+
+            if (!Double.isFinite(amount) || amount <= 0) {
+                conversations.remove(conversationId);
+
+                return response(
+                        "UNKNOWN",
+                        "The expense amount is invalid. Nothing was saved."
+                );
+            }
+
             FarmerExpense expense = new FarmerExpense();
             expense.setFarmerId(conversation.farmerId);
-            expense.setAmount(((Number) amountValue).doubleValue());
-            expense.setCategory(
-                    (String) conversation.data.get("category")
-            );
-            expense.setDescription(
-                    (String) conversation.data.get("description")
-            );
+            expense.setAmount(amount);
+            expense.setCategory(categoryValue.toString());
+            expense.setDescription(descriptionValue.toString());
             expense.setExpenseDate(LocalDate.now());
 
             FarmerExpense saved = expenseRepository.save(expense);
             conversations.remove(conversationId);
 
-            return response(
+            AssistantResponse result = response(
                     "EXPENSE_SAVED",
                     "Expense saved successfully! Amount: ₹" +
                             saved.getAmount() +
                             ", Category: " + saved.getCategory() +
                             ", Expense ID: " + saved.getId()
             );
+
+            result.setNextStep("COMPLETED");
+            return result;
         }
 
         if ("CROP_CREATE".equals(conversation.intent)) {
-
             if (!"CONFIRM_CROP".equals(conversation.step)) {
                 return response(
                         "UNKNOWN",
@@ -479,6 +526,8 @@ public class FarmerAssistantService {
             );
 
             result.setNextStep("COMPLETED");
+            result.setConversationId(conversationId);
+
             return result;
         }
 
@@ -518,12 +567,32 @@ public class FarmerAssistantService {
         );
     }
 
-    private boolean isCancelMessage(String message) {
-        String text = message.trim().toLowerCase();
+    private boolean isYes(String message) {
+        if (message == null) {
+            return false;
+        }
 
-        return text.equals("cancel")
+        String text = message.trim().toLowerCase(Locale.ROOT);
+
+        return text.equals("yes")
+                || text.equals("y")
+                || text.equals("confirm")
+                || text.equals("confirmed")
+                || text.equals("save")
+                || text.equals("save it");
+    }
+
+    private boolean isNo(String message) {
+        if (message == null) {
+            return false;
+        }
+
+        String text = message.trim().toLowerCase(Locale.ROOT);
+
+        return text.equals("no")
+                || text.equals("n")
+                || text.equals("cancel")
                 || text.equals("stop")
-                || text.equals("no")
                 || text.equals("no thanks");
     }
 
@@ -531,7 +600,7 @@ public class FarmerAssistantService {
         try {
             LocalDate.parse(value);
             return true;
-        } catch (Exception exception) {
+        } catch (DateTimeParseException exception) {
             return false;
         }
     }
