@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/harvests")
-@CrossOrigin(origins = "http://localhost:5173")
+
 public class HarvestController {
 
     private final HarvestRepository harvestRepository;
