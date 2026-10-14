@@ -91,4 +91,30 @@ public class HarvestController {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Harvest not found"));
     }
+
+    @DeleteMapping("/{id}")
+    public void deleteHarvest(@PathVariable Long id) {
+        if (!harvestRepository.existsById(id)) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Harvest not found");
+        }
+        harvestRepository.deleteById(id);
+    }
+
+    @DeleteMapping("/farmer/{farmerId}/{id}")
+    public void deleteFarmerHarvest(
+            @PathVariable Long farmerId,
+            @PathVariable Long id) {
+        Harvest harvest = harvestRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Harvest not found"));
+
+        if (!harvest.getFarmerId().equals(farmerId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "You are not allowed to delete this harvest");
+        }
+
+        harvestRepository.delete(harvest);
+    }
 }

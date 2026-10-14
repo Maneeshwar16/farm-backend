@@ -2,10 +2,12 @@ package com.agriculture.backend.Service;
 
 import com.agriculture.backend.dto.AssistantResponse;
 import com.agriculture.backend.entity.Crop;
+import com.agriculture.backend.entity.Farm;
 import com.agriculture.backend.entity.FarmerExpense;
 import com.agriculture.backend.entity.Harvest;
 import com.agriculture.backend.entity.Product;
 import com.agriculture.backend.repository.CropRepository;
+import com.agriculture.backend.repository.FarmRepository;
 import com.agriculture.backend.repository.FarmerExpenseRepository;
 import com.agriculture.backend.repository.HarvestRepository;
 import com.agriculture.backend.repository.ProductRepository;
@@ -30,6 +32,7 @@ public class FarmerAssistantService {
 
     private final FarmerTextParser parser;
     private final CropRepository cropRepository;
+    private final FarmRepository farmRepository;
     private final FarmerExpenseRepository expenseRepository;
     private final ProductRepository productRepository;
     private final HarvestRepository harvestRepository;
@@ -40,12 +43,14 @@ public class FarmerAssistantService {
     public FarmerAssistantService(
             FarmerTextParser parser,
             CropRepository cropRepository,
+            FarmRepository farmRepository,
             FarmerExpenseRepository expenseRepository,
             ProductRepository productRepository,
             HarvestRepository harvestRepository) {
 
         this.parser = parser;
         this.cropRepository = cropRepository;
+        this.farmRepository = farmRepository;
         this.expenseRepository = expenseRepository;
         this.productRepository = productRepository;
         this.harvestRepository = harvestRepository;
@@ -90,7 +95,14 @@ public class FarmerAssistantService {
 
         // Continue the same guided conversation.
         if (conversation != null) {
-            if (conversation.step.startsWith("CONFIRM_")) {
+            // If user's message is a new query, command, greeting, or cancel, break out of the stuck conversation
+            // so it never swallows user queries like "my expenses" as a crop name or field value!
+            if (isCancelOrNewIntent(lower)) {
+                if (conversationId != null) {
+                    conversations.remove(conversationId);
+                }
+                // Fall through to immediately answer the new intent!
+            } else if (conversation.step.startsWith("CONFIRM_")) {
                 if (confirmed || isYes(text)) {
                     return saveAction(conversation, conversationId);
                 }
@@ -99,45 +111,92 @@ public class FarmerAssistantService {
                         conversation,
                         conversationId,
                         "Please reply YES to proceed or NO to cancel.");
+            } else {
+                return continueConversation(
+                        conversation, text, conversationId);
             }
-
-            return continueConversation(
-                    conversation, text, conversationId);
         }
 
-        // 1. Crop deletion request
+        // 0. Greetings / Help
+        if (parser.isGreeting(lower)) {
+            return parser.parse(text);
+        }
+
+        // 1. Farm deletion request
+        if (parser.isFarmDelete(lower)) {
+            String target = parser.extractFarmDeleteTarget(text);
+            return startFarmDeleteConversation(farmerId, target);
+        }
+
+        // 2. Crop deletion request
         if (parser.isCropDelete(lower)) {
             String target = parser.extractCropDeleteTarget(text);
             return startCropDeleteConversation(farmerId, target);
         }
 
-        // 2. Read-only crop questions answered from saved database records
+        // 3. Product deletion request
+        if (containsAny(lower, "delete product", "remove product", "delete listing", "remove listing")) {
+            Matcher m = Pattern.compile("(?i)(?:delete product|remove product|delete listing|remove listing)[:\\s]+([a-zA-Z0-9\\s]+)")
+                    .matcher(text);
+            String target = m.find() ? m.group(1).trim() : null;
+            return startProductDeleteConversation(farmerId, target);
+        }
+
+        // 4. Farm query (show farms, my farms, list farms)
+        if (parser.isFarmQuery(lower)) {
+            return answerFarmQuestion(farmerId, lower);
+        }
+
+        // 5. Harvest query (show harvests, my harvests, harvest records)
+        if (parser.isHarvestQuery(lower)) {
+            return answerHarvestQuestion(farmerId, lower);
+        }
+
+        // 6. Read-only crop questions answered from saved database records
         if (isCropQuery(lower)) {
             return answerCropQuestion(farmerId, lower);
         }
 
-        // 3. Expense summary questions
+        // 7. Expense summary questions
         if (isExpenseSummaryQuestion(lower)) {
             return answerExpenseQuestion(farmerId, lower);
         }
 
-        // 4. Stock / product summary questions
+        // 8. Stock / product summary questions
         if (isStockQuestion(lower)) {
             return answerStockQuestion(farmerId, lower);
         }
 
-        // 5. Harvest requests
+        // 9. Farm creation request (add farm, help me to add farm)
+        if (parser.isFarmCreate(lower)) {
+            return startFarmConversation(farmerId, text);
+        }
+
+        // 10. Harvest requests (record harvest, record my harvests)
         if (isHarvestRequest(lower)) {
             return startHarvestConversation(farmerId, text);
         }
 
-        // 6. Product creation requests
+        // 11. Product creation requests
         if (isProductCreateRequest(lower)) {
             return startProductConversation(farmerId, text);
         }
 
-        // 7. Parse message using FarmerTextParser
+        // 12. Parse message using FarmerTextParser
         AssistantResponse parsed = parser.parse(text);
+
+        if ("GREETING".equals(parsed.getIntent())) {
+            return parsed;
+        }
+
+        if ("FARM_DELETE".equals(parsed.getIntent())) {
+            String target = parsed.getData() != null ? String.valueOf(parsed.getData().get("target")) : null;
+            return startFarmDeleteConversation(farmerId, target);
+        }
+
+        if ("FARM_CREATE".equals(parsed.getIntent())) {
+            return startFarmConversation(farmerId, text);
+        }
 
         if ("CROP_DELETE".equals(parsed.getIntent())) {
             String target = parsed.getData() != null ? String.valueOf(parsed.getData().get("target")) : null;
@@ -162,9 +221,17 @@ public class FarmerAssistantService {
             return question(crop, id, parser.cropQuestion(crop.step));
         }
 
+        if ("HARVEST".equals(parsed.getIntent())) {
+            return startHarvestConversation(farmerId, text);
+        }
+
         if ("PRODUCT_DELETE".equals(parsed.getIntent())) {
             String prodName = parsed.getData() != null ? String.valueOf(parsed.getData().get("productName")) : null;
             return startProductDeleteConversation(farmerId, prodName);
+        }
+
+        if ("PRODUCT_CREATE".equals(parsed.getIntent())) {
+            return startProductConversation(farmerId, text);
         }
 
         if ("EXPENSE".equals(parsed.getIntent())) {
@@ -203,14 +270,122 @@ public class FarmerAssistantService {
 
         return response(
                 "UNKNOWN",
-                "I can help you add or delete crops, list products, record expenses, " +
+                "I can help you add or delete crops, register farms, list products, record expenses, " +
                         "record harvests, and check your saved farm records.\n\n" +
                         "Try:\n" +
                         "• \"Show my crops\"\n" +
                         "• \"I am planting 5 acres of wheat\"\n" +
                         "• \"Delete crop tomato\"\n" +
+                        "• \"Help me to add farm\"\n" +
+                        "• \"My farms\"\n" +
+                        "• \"Record my harvests\"\n" +
                         "• \"Existing stock\"\n" +
                         "• \"I spent ₹500 on fertilizer\"");
+    }
+
+    // ---------------------------------------------------------
+    // FARM REGISTRATION & DELETION FLOW
+    // ---------------------------------------------------------
+
+    private AssistantResponse startFarmConversation(Long farmerId, String text) {
+        Map<String, Object> data = parser.extractFarmDetails(text);
+        Conversation farm = new Conversation(farmerId, "FARM_CREATE");
+        farm.data.putAll(data);
+        farm.step = parser.nextFarmStep(farm.data);
+
+        String id = UUID.randomUUID().toString();
+        conversations.put(id, farm);
+
+        if ("CONFIRM_FARM".equals(farm.step)) {
+            return farmSummary(farm, id);
+        }
+
+        return question(farm, id, parser.farmQuestion(farm.step));
+    }
+
+    private AssistantResponse farmSummary(Conversation c, String id) {
+        AssistantResponse result = question(
+                c, id,
+                "🚜 **Please confirm your farm details:**\n\n" +
+                        "• **Farm Name**: " + c.data.get("farmName") + "\n" +
+                        "• **Location**: " + c.data.get("location") + "\n" +
+                        "• **Total Area**: " + c.data.get("area") + " " + (c.data.get("areaUnit") != null ? c.data.get("areaUnit") : "Acres") + "\n" +
+                        "• **Soil Type**: " + c.data.get("soilType") + "\n" +
+                        "• **Irrigation**: " + c.data.get("irrigationMethod") + "\n\n" +
+                        "Reply **YES** to save to your records or **NO** to cancel.");
+
+        result.setRequiresConfirmation(true);
+        result.setNextStep("CONFIRM_FARM");
+        return result;
+    }
+
+    private AssistantResponse startFarmDeleteConversation(Long farmerId, String target) {
+        List<Farm> farms = farmRepository.findByFarmerId(farmerId);
+        if (farms.isEmpty()) {
+            return response("FARM_DELETE", "🚜 You don't have any registered farm records to delete.");
+        }
+
+        Farm matched = null;
+        if (target != null && !target.isBlank() && !"null".equalsIgnoreCase(target)) {
+            try {
+                String cleanNum = target.replaceAll("[^0-9]", "");
+                if (!cleanNum.isBlank()) {
+                    Long numId = Long.parseLong(cleanNum);
+                    for (Farm f : farms) {
+                        if (f.getId().equals(numId)) {
+                            matched = f;
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            if (matched == null) {
+                String tLower = target.toLowerCase(Locale.ROOT).trim();
+                for (Farm f : farms) {
+                    if (f.getFarmName() != null) {
+                        String fName = f.getFarmName().toLowerCase(Locale.ROOT);
+                        if (fName.equals(tLower) || fName.contains(tLower) || tLower.contains(fName)) {
+                            matched = f;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Conversation c = new Conversation(farmerId, "FARM_DELETE");
+        String id = UUID.randomUUID().toString();
+
+        if (matched != null) {
+            c.data.put("farmId", matched.getId());
+            c.data.put("farmName", matched.getFarmName());
+            c.step = "CONFIRM_FARM_DELETE";
+            conversations.put(id, c);
+
+            AssistantResponse res = question(
+                    c, id,
+                    "⚠️ Are you sure you want to delete farm **" + matched.getFarmName() +
+                            "** (ID: #" + matched.getId() + ", Location: " + matched.getLocation() +
+                            ", Area: " + matched.getArea() + " " + (matched.getAreaUnit() != null ? matched.getAreaUnit() : "Acres") + ")?\n\n" +
+                            "Reply **YES** to confirm permanent deletion or **NO** to cancel.");
+            res.setRequiresConfirmation(true);
+            res.setNextStep("CONFIRM_FARM_DELETE");
+            return res;
+        }
+
+        c.step = "FARM_DELETE_TARGET";
+        conversations.put(id, c);
+
+        StringBuilder sb = new StringBuilder("Which farm would you like to delete? Enter the farm name or ID from your records:\n\n");
+        int idx = 1;
+        for (Farm f : farms) {
+            sb.append(idx++).append(". **").append(f.getFarmName()).append("** (ID: #").append(f.getId())
+                    .append(", Location: ").append(f.getLocation())
+                    .append(", Area: ").append(f.getArea()).append(" ").append(f.getAreaUnit() != null ? f.getAreaUnit() : "Acres").append(")\n");
+        }
+        sb.append("\nOr reply **NO** to cancel.");
+        return question(c, id, sb.toString());
     }
 
     // ---------------------------------------------------------
@@ -550,6 +725,57 @@ public class FarmerAssistantService {
     private AssistantResponse continueConversation(
             Conversation c, String answer, String id) {
 
+        if (c.intent.equals("FARM_DELETE")) {
+            if ("FARM_DELETE_TARGET".equals(c.step)) {
+                List<Farm> farms = farmRepository.findByFarmerId(c.farmerId);
+                Farm matched = null;
+
+                try {
+                    String cleanNum = answer.replaceAll("[^0-9]", "");
+                    if (!cleanNum.isBlank()) {
+                        Long numId = Long.parseLong(cleanNum);
+                        for (Farm f : farms) {
+                            if (f.getId().equals(numId)) {
+                                matched = f;
+                                break;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                if (matched == null) {
+                    String aLower = answer.toLowerCase(Locale.ROOT).trim();
+                    for (Farm f : farms) {
+                        if (f.getFarmName() != null) {
+                            String fName = f.getFarmName().toLowerCase(Locale.ROOT);
+                            if (fName.equals(aLower) || fName.contains(aLower) || aLower.contains(fName)) {
+                                matched = f;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (matched == null) {
+                    return question(c, id, "I couldn't find a farm matching \"" + answer + "\". Please enter a valid farm name or ID from your records, or reply NO to cancel.");
+                }
+
+                c.data.put("farmId", matched.getId());
+                c.data.put("farmName", matched.getFarmName());
+                c.step = "CONFIRM_FARM_DELETE";
+
+                AssistantResponse res = question(
+                        c, id,
+                        "⚠️ Are you sure you want to delete farm **" + matched.getFarmName() +
+                                "** (ID: #" + matched.getId() + ", Location: " + matched.getLocation() +
+                                ", Area: " + matched.getArea() + " " + (matched.getAreaUnit() != null ? matched.getAreaUnit() : "Acres") + ")?\n\n" +
+                                "Reply **YES** to confirm permanent deletion or **NO** to cancel.");
+                res.setRequiresConfirmation(true);
+                res.setNextStep("CONFIRM_FARM_DELETE");
+                return res;
+            }
+        }
+
         if (c.intent.equals("CROP_DELETE")) {
             if ("CROP_DELETE_TARGET".equals(c.step)) {
                 List<Crop> crops = cropRepository.findByFarmerId(c.farmerId);
@@ -767,6 +993,40 @@ public class FarmerAssistantService {
                     : question(c, id, parser.cropQuestion(c.step));
         }
 
+        if (c.intent.equals("FARM_CREATE")) {
+            switch (c.step) {
+                case "FARM_NAME":
+                    c.data.put("farmName", answer.trim());
+                    break;
+                case "FARM_LOCATION":
+                    c.data.put("location", answer.trim());
+                    break;
+                case "FARM_AREA":
+                    Matcher areaMatcher = Pattern.compile("(\\d+(?:\\.\\d+)?)").matcher(answer);
+                    if (!areaMatcher.find() || Double.parseDouble(areaMatcher.group(1)) <= 0) {
+                        return question(c, id, "Please enter a positive area number, such as 10 acres or 5.");
+                    }
+                    c.data.put("area", Double.parseDouble(areaMatcher.group(1)));
+                    String areaText = answer.toLowerCase(Locale.ROOT);
+                    if (areaText.contains("hectare") || areaText.contains("ha")) {
+                        c.data.put("areaUnit", "Hectares");
+                    } else if (areaText.contains("cent")) {
+                        c.data.put("areaUnit", "Cents");
+                    } else {
+                        c.data.put("areaUnit", "Acres");
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            c.step = parser.nextFarmStep(c.data);
+
+            return "CONFIRM_FARM".equals(c.step)
+                    ? farmSummary(c, id)
+                    : question(c, id, parser.farmQuestion(c.step));
+        }
+
         if (c.intent.equals("EXPENSE")) {
             return question(
                     c, id,
@@ -782,6 +1042,45 @@ public class FarmerAssistantService {
 
     @Transactional
     private AssistantResponse saveAction(Conversation c, String id) {
+
+        if (c.intent.equals("FARM_DELETE")) {
+            Long farmId = ((Number) c.data.get("farmId")).longValue();
+            String farmName = String.valueOf(c.data.get("farmName"));
+
+            Farm farm = farmRepository.findById(farmId).orElse(null);
+            if (farm != null && farm.getFarmerId().equals(c.farmerId)) {
+                farmRepository.delete(farm);
+            }
+            conversations.remove(id);
+
+            return completed(
+                    "FARM_DELETED",
+                    "🗑️ Farm **" + farmName + "** (ID: #" + farmId + ") has been deleted successfully from your records.",
+                    id);
+        }
+
+        if (c.intent.equals("FARM_CREATE")) {
+            Farm farm = new Farm();
+            farm.setFarmerId(c.farmerId);
+            farm.setFarmName(String.valueOf(c.data.get("farmName")));
+            farm.setLocation(String.valueOf(c.data.get("location")));
+            farm.setArea(c.data.get("area") != null ? ((Number) c.data.get("area")).doubleValue() : 1.0);
+            farm.setAreaUnit(c.data.get("areaUnit") != null ? String.valueOf(c.data.get("areaUnit")) : "Acres");
+            farm.setSoilType(c.data.get("soilType") != null ? String.valueOf(c.data.get("soilType")) : "Loamy soil");
+            farm.setIrrigationMethod(c.data.get("irrigationMethod") != null ? String.valueOf(c.data.get("irrigationMethod")) : "Drip irrigation");
+
+            Farm saved = farmRepository.save(farm);
+            conversations.remove(id);
+
+            return completed(
+                    "FARM_SAVED",
+                    "🚜 Farm **" + saved.getFarmName() + "** has been registered successfully!\n\n" +
+                            "• Farm ID: #" + saved.getId() + "\n" +
+                            "• Location: " + saved.getLocation() + "\n" +
+                            "• Total Area: " + saved.getArea() + " " + saved.getAreaUnit() + "\n" +
+                            "• Soil & Irrigation: " + saved.getSoilType() + " / " + saved.getIrrigationMethod(),
+                    id);
+        }
 
         if (c.intent.equals("CROP_DELETE")) {
             Long cropId = ((Number) c.data.get("cropId")).longValue();
@@ -980,10 +1279,12 @@ public class FarmerAssistantService {
         StringBuilder answer = new StringBuilder("🧺 **Your Saved Product Listings (Total: " + matches.size() + "):**\n\n");
 
         for (Product product : matches) {
-            answer.append("• **")
-                    .append(product.getProductName())
-                    .append("** (ID: #").append(product.getId()).append(")")
-                    .append("\n  - Quantity: ").append(product.getQuantity()).append(" kg")
+            String pName = product.getProductName() != null && !product.getProductName().isBlank()
+                    ? product.getProductName()
+                    : "Product";
+            answer.append("• **Product Name**: ").append(pName)
+                    .append(" (Product ID: #").append(product.getId()).append(")")
+                    .append("\n  - Available Quantity: ").append(product.getQuantity()).append(" kg")
                     .append("\n  - Price: ₹").append(product.getPrice()).append(" / kg")
                     .append("\n  - Category: ").append(product.getCategory() != null ? product.getCategory() : "Other")
                     .append("\n\n");
@@ -992,6 +1293,83 @@ public class FarmerAssistantService {
         answer.append("💡 *You can say \"add product\" to list a new item, or \"delete product <name>\" to remove an item.*");
 
         return response("STOCK", answer.toString());
+    }
+
+    private AssistantResponse answerFarmQuestion(Long farmerId, String text) {
+        List<Farm> farms = farmRepository.findByFarmerId(farmerId);
+        if (farms.isEmpty()) {
+            return response(
+                    "FARMS",
+                    "🚜 You don't have any registered farms yet.\n\n" +
+                            "Try saying: *\"Add farm Green Valley in 10 acres at Guntur\"* or *\"Help me to add farm\"* to register your first farm!");
+        }
+
+        String lower = text.toLowerCase(Locale.ROOT);
+
+        // Check if user is asking about a specific farm in their records
+        Farm specificFarm = null;
+        for (Farm f : farms) {
+            if (f.getFarmName() != null && !f.getFarmName().isBlank()) {
+                String fName = f.getFarmName().toLowerCase(Locale.ROOT);
+                if (lower.contains(fName)) {
+                    specificFarm = f;
+                    break;
+                }
+            }
+        }
+
+        if (specificFarm != null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("🚜 **Details for your farm: ").append(specificFarm.getFarmName()).append("** (ID: #").append(specificFarm.getId()).append(")\n\n");
+            sb.append("• **Location**: ").append(specificFarm.getLocation() != null ? specificFarm.getLocation() : "N/A").append("\n");
+            sb.append("• **Total Area**: ").append(specificFarm.getArea()).append(" ").append(specificFarm.getAreaUnit() != null ? specificFarm.getAreaUnit() : "Acres").append("\n");
+            sb.append("• **Soil Type**: ").append(specificFarm.getSoilType() != null ? specificFarm.getSoilType() : "Loamy soil").append("\n");
+            sb.append("• **Irrigation**: ").append(specificFarm.getIrrigationMethod() != null ? specificFarm.getIrrigationMethod() : "Drip irrigation").append("\n\n");
+            sb.append("💡 *You can say \"delete farm ").append(specificFarm.getFarmName()).append("\" to remove this farm record.*");
+            return response("FARMS", sb.toString());
+        }
+
+        StringBuilder answer = new StringBuilder("🚜 **Your Registered Farms (Total: ")
+                .append(farms.size()).append("):**\n\n");
+
+        int index = 1;
+        for (Farm farm : farms) {
+            answer.append(index++).append(". **").append(farm.getFarmName()).append("** (ID: #").append(farm.getId()).append(")\n")
+                    .append("   • **Location**: ").append(farm.getLocation() != null ? farm.getLocation() : "N/A").append("\n")
+                    .append("   • **Area**: ").append(farm.getArea()).append(" ").append(farm.getAreaUnit() != null ? farm.getAreaUnit() : "Acres").append("\n")
+                    .append("   • **Soil & Irrigation**: ").append(farm.getSoilType() != null ? farm.getSoilType() : "Loamy soil")
+                    .append(" / ").append(farm.getIrrigationMethod() != null ? farm.getIrrigationMethod() : "Drip irrigation").append("\n\n");
+        }
+
+        answer.append("💡 *You can say \"help me to add farm\" to register a new farm or \"delete farm <name/ID>\" to remove a farm.*");
+
+        return response("FARMS", answer.toString());
+    }
+
+    private AssistantResponse answerHarvestQuestion(Long farmerId, String text) {
+        List<Harvest> harvests = harvestRepository.findByFarmerId(farmerId);
+        if (harvests.isEmpty()) {
+            return response(
+                    "HARVESTS",
+                    "🌾 You don't have any harvest records saved yet.\n\n" +
+                            "Try saying: *\"Record harvest\"* or *\"I harvested 50 kg of wheat\"* to record your first harvest!");
+        }
+
+        StringBuilder answer = new StringBuilder("🌾 **Your Recorded Harvests (Total: ")
+                .append(harvests.size()).append("):**\n\n");
+
+        int index = 1;
+        for (Harvest h : harvests) {
+            answer.append(index++).append(". **").append(h.getCropName()).append("** (Harvest ID: #").append(h.getId()).append(")\n")
+                    .append("   • **Harvest Date**: ").append(h.getHarvestDate() != null ? h.getHarvestDate() : "N/A").append("\n")
+                    .append("   • **Quantity**: ").append(h.getQuantity()).append(" ").append(h.getQuantityUnit() != null ? h.getQuantityUnit() : "kg").append("\n")
+                    .append("   • **Selling Price**: ₹").append(h.getSellingPrice()).append(" / unit").append("\n")
+                    .append("   • **Revenue**: ₹").append(h.getRevenue()).append("\n\n");
+        }
+
+        answer.append("💡 *To record a new harvest, say \"record harvest\" or \"harvest <crop name>\".*");
+
+        return response("HARVESTS", answer.toString());
     }
 
     private AssistantResponse answerCropQuestion(
@@ -1066,6 +1444,7 @@ public class FarmerAssistantService {
 
         double total = 0;
         int count = 0;
+        List<FarmerExpense> matchedList = new ArrayList<>();
 
         for (FarmerExpense expense : expenses) {
             if (category != null
@@ -1084,16 +1463,37 @@ public class FarmerAssistantService {
 
             total += expense.getAmount();
             count++;
+            matchedList.add(expense);
         }
 
         String period = thisMonth ? " this month" : "";
         String categoryText = category == null ? "all categories" : category;
 
-        return response(
-                "EXPENSE_SUMMARY",
-                "💰 Your recorded expenses for " + categoryText + period +
-                        " total ₹" + String.format(Locale.ROOT, "%.2f", total) +
-                        " across " + count + " record(s).");
+        if (count == 0) {
+            return response(
+                    "EXPENSE_SUMMARY",
+                    "💰 You have no expenses recorded for " + categoryText + period + ".\n\n" +
+                            "Try saying: *\"I spent ₹500 on fertilizer\"* or *\"Paid ₹1200 for seeds\"* to record an expense!");
+        }
+
+        StringBuilder sb = new StringBuilder("💰 **Recorded Expenses for " + categoryText + period +
+                " (Total: ₹" + String.format(Locale.ROOT, "%.2f", total) + " across " + count + " record(s)):**\n\n");
+
+        int shown = Math.min(matchedList.size(), 5);
+        for (int i = 0; i < shown; i++) {
+            FarmerExpense e = matchedList.get(matchedList.size() - 1 - i); // show most recent first
+            sb.append("• **").append(e.getCategory() != null ? e.getCategory() : "Expense")
+                    .append("**: ₹").append(e.getAmount())
+                    .append(" (").append(e.getExpenseDate() != null ? e.getExpenseDate() : "N/A").append(")")
+                    .append(e.getDescription() != null && !e.getDescription().isBlank() ? " - *" + e.getDescription() + "*" : "")
+                    .append("\n");
+        }
+        if (matchedList.size() > 5) {
+            sb.append("... and ").append(matchedList.size() - 5).append(" earlier record(s).\n");
+        }
+        sb.append("\n💡 *Say \"I spent ₹<amount> on <category>\" to record a new expense.*");
+
+        return response("EXPENSE_SUMMARY", sb.toString());
     }
 
     // ---------------------------------------------------------
@@ -1268,17 +1668,17 @@ public class FarmerAssistantService {
     }
 
     private boolean isExpenseSummaryQuestion(String text) {
-        return (text.contains("how much") || text.contains("total spent")
-                || text.contains("total expense")
-                || text.contains("expenses so far")
-                || text.contains("expense total")
-                || text.contains("my expenses")
-                || text.contains("show expenses")
-                || text.contains("list expenses"))
-                && (text.contains("spent") || text.contains("expense")
-                || text.contains("fertilizer") || text.contains("fertiliser")
-                || text.contains("seed") || text.contains("pesticide")
-                || text.contains("labour") || text.contains("labor"));
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+        if (lower.equals("expenses") || lower.equals("expense") || lower.equals("my expenses")
+                || lower.equals("show expenses") || lower.equals("list expenses") || lower.equals("total spent")
+                || lower.equals("total expense") || lower.equals("check expenses") || lower.equals("all expenses")
+                || lower.equals("expense list") || lower.equals("view expenses")) {
+            return true;
+        }
+        boolean hasSpent = containsAny(lower, "spent", "spending", "expense", "expenses", "cost");
+        boolean hasQuery = containsAny(lower, "how much", "total", "summary", "my", "show", "list", "check", "all", "so far", "what");
+        return hasSpent && hasQuery;
     }
 
     private boolean isStockQuestion(String text) {
@@ -1325,7 +1725,11 @@ public class FarmerAssistantService {
     }
 
     private boolean isHarvestRequest(String text) {
-        return text.matches("(?s).*(\\bharvest\\b|\\bharvested\\b|\\breaped\\b).*");
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+        if (parser.isHarvestQuery(lower)) return false;
+        return containsAny(lower, "record harvest", "record my harvests", "add harvest", "new harvest")
+                || text.matches("(?s).*(\\bharvest\\b|\\bharvested\\b|\\breaped\\b).*");
     }
 
     private boolean isProductCreateRequest(String text) {
@@ -1335,6 +1739,18 @@ public class FarmerAssistantService {
                 || text.contains("add product")
                 || text.contains("put up for sale")
                 || text.contains("product for sale");
+    }
+
+    private boolean isCancelOrNewIntent(String lower) {
+        if (lower == null || lower.isBlank()) return false;
+        if (isNo(lower)) return true;
+        if (parser.isGreeting(lower)) return true;
+        if (parser.isFarmQuery(lower) || parser.isFarmCreate(lower) || parser.isFarmDelete(lower)) return true;
+        if (parser.isHarvestQuery(lower)) return true;
+        if (isCropQuery(lower) || parser.isCropDelete(lower) || parser.isCropCreate(lower)) return true;
+        if (isExpenseSummaryQuestion(lower)) return true;
+        if (isStockQuestion(lower)) return true;
+        return false;
     }
 
     private boolean isYes(String value) {

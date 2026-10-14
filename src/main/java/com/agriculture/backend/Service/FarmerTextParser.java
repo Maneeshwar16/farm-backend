@@ -29,7 +29,42 @@ public class FarmerTextParser {
 
         String text = message.toLowerCase(Locale.ROOT).trim();
 
-        // 1. Check for crop deletion
+        // 1. Check for Greetings / General Help
+        if (isGreeting(text)) {
+            return response("GREETING",
+                    "Namaste! 🌱 I am your smart **Farmer Assistant**.\n\n" +
+                            "Here is what I can do for you:\n\n" +
+                            "🌾 **Crops**: *\"I am planting 5 acres of wheat\"*, *\"Show my crops\"*, *\"Delete crop tomato\"*\n" +
+                            "🚜 **Farms**: *\"Add farm Green Valley in 10 acres at Guntur\"*, *\"Show my farms\"*, *\"Delete farm\"*\n" +
+                            "🌾 **Harvests**: *\"Record harvest\"*, *\"My harvests\"*\n" +
+                            "🧺 **Products**: *\"Sell 100 kg of potatoes at ₹25\"*, *\"Existing stock\"*, *\"Delete product\"*\n" +
+                            "💰 **Expenses**: *\"I spent ₹500 on fertilizer\"*, *\"My expenses\"*, *\"Total spent\"*\n\n" +
+                            "What would you like to do today?");
+        }
+
+        // 2. Check for farm deletion
+        if (isFarmDelete(text)) {
+            String target = extractFarmDeleteTarget(message);
+            AssistantResponse result = response("FARM_DELETE", "Delete farm");
+            if (target != null && !target.isBlank()) {
+                result.getData().put("target", target);
+            }
+            result.setNextStep("CONFIRM_FARM_DELETE");
+            return result;
+        }
+
+        // 3. Check for farm creation
+        if (isFarmCreate(text)) {
+            Map<String, Object> data = extractFarmDetails(message);
+            AssistantResponse result = response("FARM_CREATE", "Let's register your farm.");
+            result.setData(data);
+            String nextStep = nextFarmStep(data);
+            result.setNextStep(nextStep);
+            result.setMessage(farmQuestion(nextStep));
+            return result;
+        }
+
+        // 4. Check for crop deletion
         if (isCropDelete(text)) {
             String target = extractCropDeleteTarget(message);
             AssistantResponse result = response("CROP_DELETE", "Delete crop");
@@ -40,7 +75,7 @@ public class FarmerTextParser {
             return result;
         }
 
-        // 2. Check for product deletion
+        // 5. Check for product deletion
         if (containsAny(text, "delete product", "remove product", "delete listing", "remove listing")) {
             Matcher m = Pattern.compile("(?i)(?:delete product|remove product|delete listing|remove listing)[:\\s]+([a-zA-Z0-9\\s]+)")
                     .matcher(message);
@@ -52,7 +87,7 @@ public class FarmerTextParser {
             return result;
         }
 
-        // 3. Check for expense recording
+        // 6. Check for expense recording
         if (containsAny(text, "spent", "expense", "paid", "cost", "purchased fertilizer", "bought seeds")) {
             Matcher matcher = AMOUNT_PATTERN.matcher(message);
             if (!matcher.find()) {
@@ -82,7 +117,7 @@ public class FarmerTextParser {
             return result;
         }
 
-        // 4. Check for crop creation
+        // 7. Check for crop creation
         if (isCropCreate(text)) {
             Map<String, Object> data = extractCropDetails(message);
             AssistantResponse result = response("CROP_CREATE", "Let's register your crop.");
@@ -93,14 +128,14 @@ public class FarmerTextParser {
             return result;
         }
 
-        // 5. Check for harvest recording
-        if (containsAny(text, "harvest", "harvested", "reaped")) {
+        // 8. Check for harvest recording
+        if (containsAny(text, "harvest", "harvested", "reaped", "record harvest", "record my harvests", "add harvest")) {
             AssistantResponse result = response("HARVEST", "Which crop did you harvest?");
             result.setNextStep("HARVEST_CROP");
             return result;
         }
 
-        // 6. Check for product creation
+        // 9. Check for product creation
         if (containsAny(text, "sell", "list product", "upload product", "add product", "put up for sale")) {
             AssistantResponse result = response("PRODUCT_CREATE", "Which product would you like to sell?");
             result.setNextStep("PRODUCT_NAME");
@@ -108,13 +143,86 @@ public class FarmerTextParser {
         }
 
         return response("UNKNOWN",
-                "I can help you add or delete crops, list products, record expenses, record harvests, and check your farm records.\n\n" +
+                "I can help you add or delete crops, manage farms, list products, record expenses, record harvests, and check your farm records.\n\n" +
                         "Try:\n" +
-                        "• \"I am planting 5 acres of wheat\"\n" +
                         "• \"Show my crops\"\n" +
+                        "• \"I am planting 5 acres of wheat\"\n" +
                         "• \"Delete crop tomato\"\n" +
-                        "• \"I spent ₹500 on fertilizer\"\n" +
-                        "• \"Existing stock\"");
+                        "• \"Help me to add farm\"\n" +
+                        "• \"My farms\"\n" +
+                        "• \"Record my harvests\"\n" +
+                        "• \"Existing stock\"\n" +
+                        "• \"I spent ₹500 on fertilizer\"");
+    }
+
+    public boolean isGreeting(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim().replaceAll("^[!?,.]+|[!?,.]+$", "").trim();
+        if (lower.equals("hi") || lower.equals("hello") || lower.equals("hey")
+                || lower.equals("namaste") || lower.equals("help") || lower.equals("start")
+                || lower.equals("menu") || lower.equals("options") || lower.equals("commands")
+                || lower.equals("vanakkam") || lower.equals("pranam")) {
+            return true;
+        }
+        if (lower.startsWith("hi ") || lower.startsWith("hello ") || lower.startsWith("hey ")
+                || lower.startsWith("namaste ") || lower.startsWith("help ")) {
+            return true;
+        }
+        return lower.contains("who are you") || lower.contains("what can you do")
+                || lower.contains("good morning") || lower.contains("good afternoon")
+                || lower.contains("good evening") || lower.contains("how can you help")
+                || lower.contains("how to use");
+    }
+
+    public boolean isFarmCreate(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT);
+        if (lower.contains("delete") || lower.contains("remove")) return false;
+        return lower.contains("add farm") || lower.contains("new farm") || lower.contains("create farm")
+                || lower.contains("register farm") || lower.contains("help me to add farm")
+                || lower.contains("record farm");
+    }
+
+    public boolean isFarmDelete(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT);
+        boolean hasDelete = containsAny(lower, "delete", "remove", "drop", "erase", "cancel");
+        boolean hasFarm = containsAny(lower, "farm", "farms", "land");
+        return hasDelete && hasFarm;
+    }
+
+    public boolean isFarmQuery(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim().replaceAll("^[!?,.]+|[!?,.]+$", "").trim();
+        if (isFarmCreate(lower) || isFarmDelete(lower)) return false;
+        if (lower.equals("farms") || lower.equals("farm") || lower.equals("my farms") || lower.equals("my farm")
+                || lower.equals("myfarms") || lower.equals("show farms") || lower.equals("list farms")
+                || lower.equals("existing farms") || lower.equals("view farms") || lower.equals("all farms")
+                || lower.equals("check farms") || lower.equals("farm details") || lower.equals("farm status")) {
+            return true;
+        }
+        boolean hasFarm = containsAny(lower, "farm", "farms", "land");
+        boolean hasQuery = containsAny(lower, "my", "show", "list", "tell", "what", "which", "details",
+                "status", "records", "record", "current", "existing", "have i", "how many", "view",
+                "display", "check", "get", "see", "any", "all", "summary");
+        return hasFarm && hasQuery;
+    }
+
+    public boolean isHarvestQuery(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim().replaceAll("^[!?,.]+|[!?,.]+$", "").trim();
+        if (lower.contains("record harvest") || lower.contains("add harvest") || lower.contains("new harvest")
+                || lower.contains("record my harvests")) return false;
+        if (lower.equals("harvests") || lower.equals("harvest") || lower.equals("my harvests")
+                || lower.equals("my harvest") || lower.equals("show harvests") || lower.equals("list harvests")
+                || lower.equals("past harvests") || lower.equals("all harvests") || lower.equals("harvest records")
+                || lower.equals("harvest history") || lower.equals("harvest list") || lower.equals("view harvests")) {
+            return true;
+        }
+        boolean hasHarvest = containsAny(lower, "harvest", "harvests", "reaped");
+        boolean hasQuery = containsAny(lower, "my", "show", "list", "tell", "what", "which", "past", "history",
+                "records", "record", "view", "display", "check", "get", "see", "all", "summary", "how much");
+        return hasHarvest && hasQuery;
     }
 
     public boolean isCropDelete(String text) {
@@ -128,7 +236,7 @@ public class FarmerTextParser {
     public boolean isCropCreate(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT);
-        if (isCropDelete(lower)) return false;
+        if (isCropDelete(lower) || isFarmCreate(lower) || isFarmDelete(lower)) return false;
         return containsAny(lower,
                 "plant", "planting", "planted",
                 "grow", "growing",
@@ -140,37 +248,123 @@ public class FarmerTextParser {
         if (message == null) return null;
         String text = message.trim();
 
-        // Pattern 1: "delete crop id 15" or "delete crop #15" or "delete crop 15"
         Matcher idMatcher = Pattern.compile("(?i)(?:delete|remove|drop|erase)\\s+(?:my\\s+)?crop\\s+(?:id\\s+|#)?(\\d+)")
                 .matcher(text);
         if (idMatcher.find()) {
             return idMatcher.group(1).trim();
         }
 
-        // Pattern 2: "delete crop <name>" or "remove crop <name>"
         Matcher nameMatcher = Pattern.compile("(?i)(?:delete|remove|drop|erase)\\s+(?:my\\s+)?crop\\s+(?:named\\s+|called\\s+)?([a-zA-Z0-9\\s]+)")
                 .matcher(text);
         if (nameMatcher.find()) {
-            String name = nameMatcher.group(1).trim();
-            // clean up trailing punctuation
-            name = name.replaceAll("[,.;!?]+$", "").trim();
-            if (!name.isBlank()) {
-                return name;
-            }
+            String name = nameMatcher.group(1).trim().replaceAll("[,.;!?]+$", "").trim();
+            if (!name.isBlank()) return name;
         }
 
-        // Pattern 3: "delete <name> crop"
         Matcher nameBeforeMatcher = Pattern.compile("(?i)(?:delete|remove|drop|erase)\\s+(?:my\\s+)?([a-zA-Z0-9\\s]+?)\\s+crop")
                 .matcher(text);
         if (nameBeforeMatcher.find()) {
-            String name = nameBeforeMatcher.group(1).trim();
-            name = name.replaceAll("[,.;!?]+$", "").trim();
-            if (!name.isBlank()) {
-                return name;
-            }
+            String name = nameBeforeMatcher.group(1).trim().replaceAll("[,.;!?]+$", "").trim();
+            if (!name.isBlank()) return name;
         }
 
         return null;
+    }
+
+    public String extractFarmDeleteTarget(String message) {
+        if (message == null) return null;
+        String text = message.trim();
+
+        Matcher idMatcher = Pattern.compile("(?i)(?:delete|remove|drop|erase)\\s+(?:my\\s+)?(?:farm|land)\\s+(?:id\\s+|#)?(\\d+)")
+                .matcher(text);
+        if (idMatcher.find()) {
+            return idMatcher.group(1).trim();
+        }
+
+        Matcher nameMatcher = Pattern.compile("(?i)(?:delete|remove|drop|erase)\\s+(?:my\\s+)?(?:farm|land)\\s+(?:named\\s+|called\\s+)?([a-zA-Z0-9\\s]+)")
+                .matcher(text);
+        if (nameMatcher.find()) {
+            String name = nameMatcher.group(1).trim().replaceAll("[,.;!?]+$", "").trim();
+            if (!name.isBlank()) return name;
+        }
+
+        return null;
+    }
+
+    public Map<String, Object> extractFarmDetails(String message) {
+        Map<String, Object> data = new LinkedHashMap<>();
+
+        // Area & unit
+        Matcher areaMatcher = AREA_PATTERN.matcher(message);
+        if (areaMatcher.find()) {
+            try {
+                double value = Double.parseDouble(areaMatcher.group(1));
+                if (Double.isFinite(value) && value > 0) {
+                    data.put("area", value);
+                    String unitRaw = areaMatcher.group(2).toLowerCase(Locale.ROOT);
+                    String unit = unitRaw.startsWith("ha") || unitRaw.startsWith("hectare") ? "Hectares" :
+                            unitRaw.startsWith("cent") ? "Cents" : "Acres";
+                    data.put("areaUnit", unit);
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // Location: e.g. "at Guntur", "in Vijayawada", "location Guntur"
+        Matcher locMatcher = Pattern.compile("(?i)(?:at|in|location)\\s+([a-zA-Z0-9\\s]+?)(?=\\s+(?:in|on|with|area|acres?|ha|hectares?|cents?)|[,.;]|$)")
+                .matcher(message);
+        if (locMatcher.find()) {
+            String loc = locMatcher.group(1).trim();
+            if (!containsAny(loc.toLowerCase(Locale.ROOT), "acres", "acres", "hectares", "farm", "my")) {
+                data.put("location", titleCase(loc));
+            }
+        }
+
+        // Farm name: e.g. "add farm Green Valley", "farm named Sunrise"
+        Matcher nameMatcher = Pattern.compile("(?i)(?:add farm|new farm|create farm|register farm|farm named|farm called)[:\\s]+([a-zA-Z0-9\\s]+?)(?=\\s+(?:at|in|with|area|acres?|ha|hectares?|cents?)|[,.;]|$)")
+                .matcher(message);
+        if (nameMatcher.find()) {
+            String name = nameMatcher.group(1).trim();
+            if (!containsAny(name.toLowerCase(Locale.ROOT), "today", "here", "farm", "land") && !name.matches("\\d+")) {
+                data.put("farmName", titleCase(name));
+            }
+        }
+
+        // Defaults
+        data.put("soilType", "Loamy soil");
+        data.put("irrigationMethod", "Drip irrigation");
+        if (!data.containsKey("areaUnit")) {
+            data.put("areaUnit", "Acres");
+        }
+
+        return data;
+    }
+
+    public String nextFarmStep(Map<String, Object> data) {
+        if (!data.containsKey("farmName") || blank(data.get("farmName"))) {
+            return "FARM_NAME";
+        }
+        if (!data.containsKey("location") || blank(data.get("location"))) {
+            return "FARM_LOCATION";
+        }
+        if (!data.containsKey("area") || blank(data.get("area"))) {
+            return "FARM_AREA";
+        }
+        return "CONFIRM_FARM";
+    }
+
+    public String farmQuestion(String step) {
+        switch (step) {
+            case "FARM_NAME":
+                return "What is the name of your farm? (e.g. Green Valley Farm, Sunrise Acres)";
+            case "FARM_LOCATION":
+                return "What is the location or village of the farm? (e.g. Guntur, Vijayawada)";
+            case "FARM_AREA":
+                return "How much total land area is this farm? (e.g. 10 acres, 5 hectares)";
+            case "CONFIRM_FARM":
+                return "All details are collected. Reply YES to save or NO to cancel.";
+            default:
+                return "Please provide the requested farm detail.";
+        }
     }
 
     public Map<String, Object> extractCropDetails(String message) {
@@ -195,39 +389,67 @@ public class FarmerTextParser {
         // 2. Extract Crop Name
         String extractedCropName = null;
 
-        // Try Pattern A: "add crop <name>" or "new crop <name>" or "record crop <name>"
-        Matcher m1 = Pattern.compile("(?i)\\b(?:add crop|new crop|record crop|register crop)[:\\s]+(?:a\\s+|the\\s+)?([a-zA-Z0-9\\s]+?)(?=\\s+(?:in|on|with|of|area|acres?|ha|hectares?|cents?|today|yesterday|\\d)|[,.;]|$)")
+        // Try direct extraction after "acres of <crop>", "ha of <crop>", "cents of <crop>", or "<number> acres <crop>"
+        Matcher mOf = Pattern.compile("(?i)(?:acres?|hectares?|cents?|ha|ac)\\s+(?:of\\s+)?([a-zA-Z\\s]+?)(?=\\s+(?:with|today|yesterday|on|in|using|for)|[,.;]|$)")
                 .matcher(message);
-        if (m1.find()) {
-            extractedCropName = m1.group(1).trim();
+        if (mOf.find()) {
+            String candidate = mOf.group(1).trim();
+            if (!candidate.isBlank() && !containsAny(candidate.toLowerCase(Locale.ROOT), "today", "yesterday", "crop", "crops", "land", "my")) {
+                extractedCropName = candidate;
+            }
         }
 
-        // Try Pattern B: "planting <name>" or "planted <name>" or "grow <name>"
         if (extractedCropName == null || extractedCropName.isBlank()) {
-            Matcher m2 = Pattern.compile("(?i)\\b(?:planting|plant|planted|grow|growing|sow|sowing|sowed|cultivating)\\s+(?:some\\s+|a\\s+|the\\s+)?([a-zA-Z0-9\\s]+?)(?=\\s+(?:in|on|with|area|acres?|ha|hectares?|cents?|today|yesterday|\\d)|[,.;]|$)")
+            Matcher mPlant = Pattern.compile("(?i)\\b(?:planting|plant|planted|grow|growing|sow|sowing|sowed|cultivating)\\s+(?:some\\s+|a\\s+|the\\s+)?([a-zA-Z\\s]+?)(?=\\s+(?:in|on|with|across|over|area|acres?|ha|hectares?|cents?|today|yesterday|\\d)|[,.;]|$)")
                     .matcher(message);
-            if (m2.find()) {
-                extractedCropName = m2.group(1).trim();
+            if (mPlant.find()) {
+                String candidate = mPlant.group(1).trim();
+                if (!candidate.isBlank() && !containsAny(candidate.toLowerCase(Locale.ROOT), "today", "yesterday", "crop", "crops", "land", "my")) {
+                    extractedCropName = candidate;
+                }
             }
         }
 
-        // Try Pattern C: "... <number> acres of <name>" or "in <number> acres of <name>"
         if (extractedCropName == null || extractedCropName.isBlank()) {
-            Matcher m3 = Pattern.compile("(?i)(?:acres?|hectares?|cents?)\\s+of\\s+([a-zA-Z0-9\\s]+?)(?=\\s+(?:with|today|yesterday|on|in)|[,.;]|$)")
+            Matcher mAdd = Pattern.compile("(?i)\\b(?:add crop|new crop|record crop|register crop)[:\\s]+(?:a\\s+|the\\s+)?([a-zA-Z\\s]+?)(?=\\s+(?:in|on|with|of|area|acres?|ha|hectares?|cents?|today|yesterday|\\d)|[,.;]|$)")
                     .matcher(message);
-            if (m3.find()) {
-                extractedCropName = m3.group(1).trim();
+            if (mAdd.find()) {
+                String candidate = mAdd.group(1).trim();
+                if (!candidate.isBlank() && !containsAny(candidate.toLowerCase(Locale.ROOT), "today", "yesterday", "crop", "crops", "land", "my")) {
+                    extractedCropName = candidate;
+                }
             }
         }
 
-        // Clean up common words that could be mistakenly captured
-        if (extractedCropName != null) {
-            String lower = extractedCropName.toLowerCase(Locale.ROOT).trim();
-            if (containsAny(lower, "today", "yesterday", "tomorrow", "now", "here", "crop", "crops") || lower.matches("\\d+")) {
-                extractedCropName = null;
-            } else {
-                data.put("cropName", titleCase(extractedCropName));
+        // Common crop dictionary lookup as high-accuracy fallback or match
+        String[][] commonCrops = {
+                {"wheat", "Wheat"}, {"rice", "Rice"}, {"paddy", "Paddy"},
+                {"tomato", "Tomato"}, {"tomatoes", "Tomato"},
+                {"potato", "Potato"}, {"potatoes", "Potato"},
+                {"onion", "Onion"}, {"onions", "Onion"},
+                {"maize", "Maize"}, {"corn", "Corn"},
+                {"cotton", "Cotton"}, {"sugarcane", "Sugarcane"},
+                {"chilli", "Chilli"}, {"chillies", "Chilli"}, {"chili", "Chili"},
+                {"groundnut", "Groundnut"}, {"peanut", "Groundnut"},
+                {"soybean", "Soybean"}, {"mustard", "Mustard"},
+                {"barley", "Barley"}, {"millet", "Millet"}, {"ragi", "Ragi"},
+                {"jowar", "Jowar"}, {"bajra", "Bajra"}, {"sunflower", "Sunflower"},
+                {"turmeric", "Turmeric"}, {"ginger", "Ginger"}, {"garlic", "Garlic"},
+                {"carrot", "Carrot"}, {"cabbage", "Cabbage"}, {"cauliflower", "Cauliflower"},
+                {"brinjal", "Brinjal"}, {"eggplant", "Brinjal"}, {"okra", "Okra"},
+                {"mango", "Mango"}, {"banana", "Banana"}, {"apple", "Apple"},
+                {"orange", "Orange"}, {"grapes", "Grapes"}, {"watermelon", "Watermelon"}
+        };
+
+        for (String[] pair : commonCrops) {
+            if (text.matches("(?s).*\\b" + pair[0] + "\\b.*")) {
+                extractedCropName = pair[1];
+                break;
             }
+        }
+
+        if (extractedCropName != null && !extractedCropName.isBlank()) {
+            data.put("cropName", titleCase(extractedCropName.trim()));
         }
 
         // 3. Extract Planting Date
@@ -238,7 +460,6 @@ public class FarmerTextParser {
             } else if (text.contains("yesterday")) {
                 data.put("plantingDate", LocalDate.now().minusDays(1).toString());
             } else {
-                // Default planting date to today
                 data.put("plantingDate", LocalDate.now().toString());
             }
         } catch (DateTimeParseException ignored) {
@@ -255,7 +476,6 @@ public class FarmerTextParser {
             } catch (DateTimeParseException ignored) {}
         }
         if (!data.containsKey("expectedHarvestDate")) {
-            // Smart default: 90 days from planting date
             LocalDate pDate = LocalDate.now();
             if (data.get("plantingDate") != null) {
                 try {
