@@ -17,6 +17,9 @@ public class Crop {
     private String variety;
     private String plantingDate;
 
+    private String soilType;
+    private String irrigationMethod;
+
     private double area;
     private String areaUnit;
 
@@ -60,6 +63,22 @@ public class Crop {
 
     public void setPlantingDate(String plantingDate) {
         this.plantingDate = plantingDate;
+    }
+
+    public String getSoilType() {
+        return soilType;
+    }
+
+    public void setSoilType(String soilType) {
+        this.soilType = soilType;
+    }
+
+    public String getIrrigationMethod() {
+        return irrigationMethod;
+    }
+
+    public void setIrrigationMethod(String irrigationMethod) {
+        this.irrigationMethod = irrigationMethod;
     }
 
     public double getArea() {
