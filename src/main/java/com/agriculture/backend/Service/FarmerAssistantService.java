@@ -1,12 +1,16 @@
+
 package com.agriculture.backend.Service;
+
 import com.agriculture.backend.dto.AssistantResponse;
 import com.agriculture.backend.entity.Crop;
 import com.agriculture.backend.entity.FarmerExpense;
 import com.agriculture.backend.repository.CropRepository;
 import com.agriculture.backend.repository.FarmerExpenseRepository;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -26,7 +30,6 @@ public class FarmerAssistantService {
             FarmerTextParser parser,
             FarmerExpenseRepository expenseRepository,
             CropRepository cropRepository) {
-
         this.parser = parser;
         this.expenseRepository = expenseRepository;
         this.cropRepository = cropRepository;
@@ -40,593 +43,317 @@ public class FarmerAssistantService {
             boolean cancelled) {
 
         if (farmerId == null || farmerId <= 0) {
-            return response(
-                    "UNKNOWN",
-                    "Please log in as a farmer before continuing."
-            );
+            return response("UNKNOWN", "Please log in as a farmer first.");
         }
 
-        Conversation conversation = null;
+        Conversation conversation = conversationId == null
+                ? null : conversations.get(conversationId);
 
-        if (conversationId != null && !conversationId.isBlank()) {
-            conversation = conversations.get(conversationId);
-
-            System.out.println(
-                    "Assistant conversation lookup: id=" + conversationId
-                            + ", found=" + (conversation != null)
-                            + ", activeConversations=" + conversations.size()
-            );
-
-            if (conversation != null
-                    && !conversation.farmerId.equals(farmerId)) {
-                return response(
-                        "UNKNOWN",
-                        "This conversation does not belong to your account."
-                );
-            }
+        if (conversation != null && !conversation.farmerId.equals(farmerId)) {
+            return response("UNKNOWN", "This conversation does not belong to your account.");
         }
 
-        if (cancelled) {
-            if (conversationId != null) {
-                conversations.remove(conversationId);
-            }
-
-            return response(
-                    "CANCELLED",
-                    "Action cancelled. Nothing was saved."
-            );
+        if (cancelled || isNo(message)) {
+            if (conversationId != null) conversations.remove(conversationId);
+            return response("CANCELLED", "Cancelled. Nothing was saved.");
         }
 
         if (conversation != null) {
-            String answer = message == null ? "" : message.trim();
-
-            if (isNo(answer)) {
-                conversations.remove(conversationId);
-
-                return response(
-                        "CANCELLED",
-                        "Cancelled. Nothing was saved."
-                );
+            if (confirmed || isYes(message)) {
+                if ("CONFIRM_CROP".equals(conversation.step)
+                        || "CONFIRM_EXPENSE".equals(conversation.step)) {
+                    return saveAction(conversation, conversationId);
+                }
             }
-
-            if (confirmed || isYes(answer)) {
-                return confirmAction(conversation, conversationId);
-            }
-
-            return continueConversation(
-                    conversation,
-                    answer,
-                    conversationId
-            );
+            return continueConversation(conversation, message, conversationId);
         }
 
         AssistantResponse parsed = parser.parse(message);
 
         if ("CROP_CREATE".equals(parsed.getIntent())) {
-            return startCropConversation(farmerId);
+            Conversation c = new Conversation(farmerId, "CROP_CREATE");
+
+            if (parsed.getData() != null) {
+                c.data.putAll(parsed.getData());
+            }
+
+            // Unknown optional details can be supplied as "Unknown".
+            // Required dates, area, unit, crop name, and soil are collected.
+            c.step = parser.nextCropStep(c.data);
+
+            String id = UUID.randomUUID().toString();
+            conversations.put(id, c);
+
+            if ("CONFIRM_CROP".equals(c.step)) return cropSummary(c, id);
+
+            AssistantResponse result = question(
+                    c, id, parser.cropQuestion(c.step)
+            );
+            return result;
         }
 
         if ("EXPENSE".equals(parsed.getIntent())) {
-            if (parsed.getAmount() == null
-                    || parsed.getAmount() <= 0
-                    || parsed.getCategory() == null) {
+            if (parsed.getAmount() == null || parsed.getCategory() == null) {
                 return parsed;
             }
 
-            Conversation expenseConversation =
-                    new Conversation(farmerId, "EXPENSE");
-
-            expenseConversation.step = "CONFIRM_EXPENSE";
-            expenseConversation.data.put(
-                    "amount", parsed.getAmount()
-            );
-            expenseConversation.data.put(
-                    "category", parsed.getCategory()
-            );
-            expenseConversation.data.put(
-                    "description", message.trim()
-            );
+            Conversation c = new Conversation(farmerId, "EXPENSE");
+            c.step = "CONFIRM_EXPENSE";
+            c.data.put("amount", parsed.getAmount());
+            c.data.put("category", parsed.getCategory());
+            c.data.put("description", message.trim());
 
             String id = UUID.randomUUID().toString();
-            conversations.put(id, expenseConversation);
+            conversations.put(id, c);
 
             parsed.setConversationId(id);
-            parsed.setNextStep("CONFIRM_EXPENSE");
-
+            parsed.setNextStep(c.step);
             return parsed;
-        }
-
-        if ("HARVEST".equals(parsed.getIntent())) {
-            return response(
-                    "HARVEST",
-                    "Harvest recording is not implemented in this assistant yet. " +
-                            "Please use your existing harvest form."
-            );
-        }
-
-        if ("PRODUCT_CREATE".equals(parsed.getIntent())
-                || "PRODUCT_DELETE".equals(parsed.getIntent())) {
-            return response(
-                    parsed.getIntent(),
-                    "Product management is not implemented in this assistant yet. " +
-                            "Please use your existing product page."
-            );
         }
 
         return parsed;
     }
 
-    private AssistantResponse startCropConversation(Long farmerId) {
-        Conversation conversation =
-                new Conversation(farmerId, "CROP_CREATE");
-
-        conversation.step = "CROP_NAME";
-
-        String id = UUID.randomUUID().toString();
-        conversations.put(id, conversation);
-
-        return question(
-                conversation,
-                id,
-                "Let's add your crop! 🌱 What crop do you want to plant?"
-        );
-    }
-
     private AssistantResponse continueConversation(
-            Conversation conversation,
-            String answer,
-            String conversationId) {
+            Conversation c, String answer, String id) {
 
         if (answer == null || answer.isBlank()) {
-            return askCurrentQuestion(conversation, conversationId);
+            return question(c, id, parser.cropQuestion(c.step));
         }
 
-        if ("CROP_CREATE".equals(conversation.intent)) {
-            return collectCropAnswer(
-                    conversation,
-                    answer,
-                    conversationId
-            );
+        if ("CROP_CREATE".equals(c.intent)) {
+            switch (c.step) {
+                case "CROP_NAME":
+                    c.data.put("cropName", answer.trim());
+                    break;
+
+                case "PLANTING_DATE":
+                    String date = parseDate(answer);
+                    if (date == null) {
+                        return question(c, id,
+                                "Enter the planting date as YYYY-MM-DD, or say today or yesterday.");
+                    }
+                    c.data.put("plantingDate", date);
+                    break;
+
+                case "SOIL_TYPE":
+                    c.data.put("soilType", answer.trim());
+                    break;
+
+                case "AREA":
+                    String number = answer.trim().replaceAll(
+                            "(?i)\\s*(acres?|hectares?|cents?)\\s*", ""
+                    );
+                    try {
+                        double area = Double.parseDouble(number);
+                        if (!Double.isFinite(area) || area <= 0) throw new NumberFormatException();
+                        c.data.put("area", area);
+
+                        String lower = answer.toLowerCase(Locale.ROOT);
+                        if (lower.contains("acre")) {
+                            c.data.put("areaUnit", "Acres");
+                        } else if (lower.contains("hectare")) {
+                            c.data.put("areaUnit", "Hectares");
+                        } else if (lower.contains("cent")) {
+                            c.data.put("areaUnit", "Cents");
+                        }
+                    } catch (NumberFormatException e) {
+                        return question(c, id,
+                                "Enter a positive area, such as 5 or 5 acres.");
+                    }
+                    break;
+
+                case "AREA_UNIT":
+                    String unit = answer.toLowerCase(Locale.ROOT);
+                    if (unit.contains("acre")) c.data.put("areaUnit", "Acres");
+                    else if (unit.contains("hectare")) c.data.put("areaUnit", "Hectares");
+                    else if (unit.contains("cent")) c.data.put("areaUnit", "Cents");
+                    else return question(c, id, "Enter acres, hectares, or cents.");
+                    break;
+
+                case "VARIETY":
+                    c.data.put("variety", answer.trim());
+                    break;
+
+                case "SEED_SOURCE":
+                    c.data.put("seedSource", answer.trim());
+                    break;
+
+                case "FERTILIZER":
+                    c.data.put("fertilizerUsed", answer.trim());
+                    break;
+
+                case "IRRIGATION":
+                    c.data.put("irrigationMethod", answer.trim());
+                    break;
+
+                case "EXPECTED_HARVEST_DATE":
+                    String harvestDate = parseDate(answer);
+                    if (harvestDate == null) {
+                        return question(c, id,
+                                "Enter the expected harvest date as YYYY-MM-DD.");
+                    }
+                    c.data.put("expectedHarvestDate", harvestDate);
+                    break;
+
+                case "CONFIRM_CROP":
+                    if (isYes(answer)) return saveAction(c, id);
+                    if (isNo(answer)) {
+                        conversations.remove(id);
+                        return response("CANCELLED", "Crop creation cancelled.");
+                    }
+                    return cropSummary(c, id);
+
+                default:
+                    return response("UNKNOWN", "Invalid crop conversation step.");
+            }
+
+            // Treat an area answer like "5 acres" as supplying both fields.
+            c.step = parser.nextCropStep(c.data);
+
+            if ("CONFIRM_CROP".equals(c.step)) return cropSummary(c, id);
+            return question(c, id, parser.cropQuestion(c.step));
         }
 
-        if ("EXPENSE".equals(conversation.intent)) {
-            return question(
-                    conversation,
-                    conversationId,
-                    "Please confirm the expense. Reply YES to save or NO to cancel."
-            );
+        if ("EXPENSE".equals(c.intent)) {
+            if (isYes(answer)) return saveAction(c, id);
+            return question(c, id,
+                    "Reply YES to save this expense, or NO to cancel.");
         }
 
-        return response(
-                "UNKNOWN",
-                "I couldn't continue this conversation. Please start again."
-        );
+        return response("UNKNOWN", "This conversation cannot be continued.");
     }
 
-    private AssistantResponse collectCropAnswer(
-            Conversation conversation,
-            String answer,
-            String conversationId) {
-
-        switch (conversation.step) {
-
-            case "CROP_NAME":
-                conversation.data.put("cropName", answer);
-                conversation.step = "PLANTING_DATE";
-                break;
-
-            case "PLANTING_DATE":
-                if (!isValidDate(answer)) {
-                    return question(
-                            conversation,
-                            conversationId,
-                            "Please enter a valid planting date in YYYY-MM-DD format."
-                    );
-                }
-
-                conversation.data.put("plantingDate", answer);
-                conversation.step = "SOIL_TYPE";
-                break;
-
-            case "SOIL_TYPE":
-                conversation.data.put("soilType", answer);
-                conversation.step = "AREA";
-                break;
-
-            case "AREA":
-                Double area = parsePositiveNumber(answer);
-
-                if (area == null) {
-                    return question(
-                            conversation,
-                            conversationId,
-                            "Please enter a valid land area, such as 0.5."
-                    );
-                }
-
-                conversation.data.put("area", area);
-                conversation.step = "AREA_UNIT";
-                break;
-
-            case "AREA_UNIT":
-                String unit = answer.toLowerCase(Locale.ROOT);
-
-                if (unit.contains("acre")) {
-                    conversation.data.put("areaUnit", "Acre");
-                } else if (unit.contains("hectare")) {
-                    conversation.data.put("areaUnit", "Hectare");
-                } else if (unit.equals("cent")
-                        || unit.equals("cents")) {
-                    conversation.data.put("areaUnit", "Cent");
-                } else if (unit.contains("square meter")
-                        || unit.equals("sqm")
-                        || unit.equals("sq m")) {
-                    conversation.data.put("areaUnit", "Square Meter");
-                } else {
-                    return question(
-                            conversation,
-                            conversationId,
-                            "Enter the area unit: acre, hectare, cent, or square meter."
-                    );
-                }
-
-                conversation.step = "VARIETY";
-                break;
-
-            case "VARIETY":
-                conversation.data.put("variety", answer);
-                conversation.step = "SEED_SOURCE";
-                break;
-
-            case "SEED_SOURCE":
-                conversation.data.put("seedSource", answer);
-                conversation.step = "FERTILIZER";
-                break;
-
-            case "FERTILIZER":
-                conversation.data.put("fertilizerUsed", answer);
-                conversation.step = "IRRIGATION";
-                break;
-
-            case "IRRIGATION":
-                conversation.data.put("irrigationMethod", answer);
-                conversation.step = "EXPECTED_HARVEST_DATE";
-                break;
-
-            case "EXPECTED_HARVEST_DATE":
-                if (!isValidDate(answer)) {
-                    return question(
-                            conversation,
-                            conversationId,
-                            "Please enter a valid expected harvest date in YYYY-MM-DD format."
-                    );
-                }
-
-                conversation.data.put("expectedHarvestDate", answer);
-                conversation.step = "CONFIRM_CROP";
-
-                return cropConfirmation(conversation, conversationId);
-
-            case "CONFIRM_CROP":
-                if (isYes(answer)) {
-                    return confirmAction(conversation, conversationId);
-                }
-
-                if (isNo(answer)) {
-                    conversations.remove(conversationId);
-
-                    return response(
-                            "CANCELLED",
-                            "Crop creation cancelled. Nothing was saved."
-                    );
-                }
-
-                return cropConfirmation(conversation, conversationId);
-
-            default:
-                return response(
-                        "UNKNOWN",
-                        "The conversation step is invalid. Please start again."
-                );
-        }
-
-        return askCurrentQuestion(conversation, conversationId);
-    }
-
-    private AssistantResponse askCurrentQuestion(
-            Conversation conversation,
-            String conversationId) {
-
-        String prompt;
-
-        switch (conversation.step) {
-
-            case "CROP_NAME":
-                prompt = "What crop do you want to plant?";
-                break;
-
-            case "PLANTING_DATE":
-                prompt = "What is the planting date? Enter YYYY-MM-DD.";
-                break;
-
-            case "SOIL_TYPE":
-                prompt = "What type of soil do you have? " +
-                        "For example, red, black, sandy, or loamy soil.";
-                break;
-
-            case "AREA":
-                prompt = "How much land will you use? " +
-                        "Enter the number only, such as 0.5.";
-                break;
-
-            case "AREA_UNIT":
-                prompt = "What is the land area unit? " +
-                        "Enter acre, hectare, cent, or square meter.";
-                break;
-
-            case "VARIETY":
-                prompt = "Which crop variety are you planting? " +
-                        "If unknown, type Unknown.";
-                break;
-
-            case "SEED_SOURCE":
-                prompt = "Where did you get the seeds? " +
-                        "If unknown, type Unknown.";
-                break;
-
-            case "FERTILIZER":
-                prompt = "Which fertilizer will you use? " +
-                        "If undecided, type Not decided.";
-                break;
-
-            case "IRRIGATION":
-                prompt = "Which irrigation method will you use? " +
-                        "For example, drip, sprinkler, or flood.";
-                break;
-
-            case "EXPECTED_HARVEST_DATE":
-                prompt = "What is the expected harvest date? Enter YYYY-MM-DD.";
-                break;
-
-            case "CONFIRM_CROP":
-                return cropConfirmation(conversation, conversationId);
-
-            case "CONFIRM_EXPENSE":
-                return question(
-                        conversation,
-                        conversationId,
-                        "Please confirm the expense. Reply YES to save or NO to cancel."
-                );
-
-            default:
-                prompt = "Please provide your answer.";
-        }
-
-        return question(conversation, conversationId, prompt);
-    }
-
-    private AssistantResponse cropConfirmation(
-            Conversation conversation,
-            String conversationId) {
-
-        Map<String, Object> data = conversation.data;
-
+    private AssistantResponse cropSummary(Conversation c, String id) {
         String summary =
-                "Please review your crop details:\n\n" +
-                        "Crop: " + data.get("cropName") + "\n" +
-                        "Planting date: " + data.get("plantingDate") + "\n" +
-                        "Soil: " + data.get("soilType") + "\n" +
-                        "Land area: " + data.get("area") + " " +
-                        data.get("areaUnit") + "\n" +
-                        "Variety: " + data.get("variety") + "\n" +
-                        "Seed source: " + data.get("seedSource") + "\n" +
-                        "Fertilizer: " + data.get("fertilizerUsed") + "\n" +
-                        "Irrigation: " + data.get("irrigationMethod") + "\n" +
-                        "Expected harvest: " + data.get("expectedHarvestDate") +
+                "Please confirm your crop details:\n\n" +
+                        "Crop: " + c.data.get("cropName") + "\n" +
+                        "Planting date: " + c.data.get("plantingDate") + "\n" +
+                        "Soil: " + c.data.get("soilType") + "\n" +
+                        "Area: " + c.data.get("area") + " " + c.data.get("areaUnit") + "\n" +
+                        "Variety: " + c.data.get("variety") + "\n" +
+                        "Seed source: " + c.data.get("seedSource") + "\n" +
+                        "Fertilizer: " + c.data.get("fertilizerUsed") + "\n" +
+                        "Irrigation: " + c.data.get("irrigationMethod") + "\n" +
+                        "Expected harvest date: " + c.data.get("expectedHarvestDate") +
                         "\n\nReply YES to save or NO to cancel.";
 
-        AssistantResponse result = question(
-                conversation,
-                conversationId,
-                summary
-        );
-
+        AssistantResponse result = question(c, id, summary);
         result.setRequiresConfirmation(true);
         result.setNextStep("CONFIRM_CROP");
-
         return result;
     }
 
-    private AssistantResponse confirmAction(
-            Conversation conversation,
-            String conversationId) {
-
-        if ("EXPENSE".equals(conversation.intent)) {
-            Object amountValue = conversation.data.get("amount");
-            Object categoryValue = conversation.data.get("category");
-            Object descriptionValue = conversation.data.get("description");
-
-            if (!(amountValue instanceof Number)
-                    || categoryValue == null
-                    || descriptionValue == null) {
-                conversations.remove(conversationId);
-
-                return response(
-                        "UNKNOWN",
-                        "The expense details are invalid. Please start again."
-                );
+    private AssistantResponse saveAction(Conversation c, String id) {
+        if ("EXPENSE".equals(c.intent)) {
+            Object value = c.data.get("amount");
+            if (!(value instanceof Number) || c.data.get("category") == null) {
+                conversations.remove(id);
+                return response("UNKNOWN", "Expense details are invalid.");
             }
 
-            double amount = ((Number) amountValue).doubleValue();
-
+            double amount = ((Number) value).doubleValue();
             if (!Double.isFinite(amount) || amount <= 0) {
-                conversations.remove(conversationId);
-
-                return response(
-                        "UNKNOWN",
-                        "The expense amount is invalid. Nothing was saved."
-                );
+                conversations.remove(id);
+                return response("UNKNOWN", "Expense amount is invalid.");
             }
 
             FarmerExpense expense = new FarmerExpense();
-            expense.setFarmerId(conversation.farmerId);
+            expense.setFarmerId(c.farmerId);
             expense.setAmount(amount);
-            expense.setCategory(categoryValue.toString());
-            expense.setDescription(descriptionValue.toString());
+            expense.setCategory(c.data.get("category").toString());
+            expense.setDescription(String.valueOf(c.data.get("description")));
             expense.setExpenseDate(LocalDate.now());
 
             FarmerExpense saved = expenseRepository.save(expense);
-            conversations.remove(conversationId);
+            conversations.remove(id);
 
             AssistantResponse result = response(
                     "EXPENSE_SAVED",
-                    "Expense saved successfully! Amount: ₹" +
-                            saved.getAmount() +
-                            ", Category: " + saved.getCategory() +
-                            ", Expense ID: " + saved.getId()
+                    "Expense saved successfully! ₹" + saved.getAmount() +
+                            ", category: " + saved.getCategory() +
+                            ", ID: " + saved.getId()
             );
-
             result.setNextStep("COMPLETED");
             return result;
         }
 
-        if ("CROP_CREATE".equals(conversation.intent)) {
-            if (!"CONFIRM_CROP".equals(conversation.step)) {
-                return response(
-                        "UNKNOWN",
-                        "The crop is not ready for confirmation."
-                );
+        if ("CROP_CREATE".equals(c.intent)) {
+            // Revalidate required data immediately before persistence.
+            if (!"CONFIRM_CROP".equals(c.step)
+                    || parser.nextCropStep(c.data) != "CONFIRM_CROP") {
+                return response("UNKNOWN",
+                        "Some crop details are missing. Please continue the conversation.");
             }
 
             Crop crop = new Crop();
-
-            crop.setFarmerId(conversation.farmerId);
-            crop.setCropName((String) conversation.data.get("cropName"));
-            crop.setPlantingDate((String) conversation.data.get("plantingDate"));
-            crop.setSoilType((String) conversation.data.get("soilType"));
-            crop.setArea(((Number) conversation.data.get("area")).doubleValue());
-            crop.setAreaUnit((String) conversation.data.get("areaUnit"));
-            crop.setVariety((String) conversation.data.get("variety"));
-            crop.setSeedSource((String) conversation.data.get("seedSource"));
-            crop.setFertilizerUsed((String) conversation.data.get("fertilizerUsed"));
-            crop.setIrrigationMethod((String) conversation.data.get("irrigationMethod"));
-            crop.setExpectedHarvestDate(
-                    (String) conversation.data.get("expectedHarvestDate")
-            );
+            crop.setFarmerId(c.farmerId);
+            crop.setCropName((String) c.data.get("cropName"));
+            crop.setPlantingDate((String) c.data.get("plantingDate"));
+            crop.setSoilType((String) c.data.get("soilType"));
+            crop.setArea(((Number) c.data.get("area")).doubleValue());
+            crop.setAreaUnit((String) c.data.get("areaUnit"));
+            crop.setVariety((String) c.data.get("variety"));
+            crop.setSeedSource((String) c.data.get("seedSource"));
+            crop.setFertilizerUsed((String) c.data.get("fertilizerUsed"));
+            crop.setIrrigationMethod((String) c.data.get("irrigationMethod"));
+            crop.setExpectedHarvestDate((String) c.data.get("expectedHarvestDate"));
             crop.setCropStatus("Growing");
 
             Crop saved = cropRepository.save(crop);
-            conversations.remove(conversationId);
+            conversations.remove(id);
 
             AssistantResponse result = response(
                     "CROP_SAVED",
-                    "Crop saved successfully! 🌱\n" +
-                            "Crop: " + saved.getCropName() +
-                            "\nCrop ID: " + saved.getId()
+                    "Crop saved successfully! 🌱 " + saved.getCropName() +
+                            " (Crop ID: " + saved.getId() + ")"
             );
-
+            result.setConversationId(id);
             result.setNextStep("COMPLETED");
-            result.setConversationId(conversationId);
-
             return result;
         }
 
-        return response(
-                "UNKNOWN",
-                "This action cannot be confirmed yet."
-        );
+        return response("UNKNOWN", "This action cannot be saved.");
     }
 
-    private AssistantResponse question(
-            Conversation conversation,
-            String conversationId,
-            String message) {
-
-        AssistantResponse result = response(
-                conversation.intent,
-                message
-        );
-
-        result.setConversationId(conversationId);
-        result.setNextStep(conversation.step);
-        result.setData(conversation.data);
-
+    private AssistantResponse question(Conversation c, String id, String message) {
+        AssistantResponse result = response(c.intent, message);
+        result.setConversationId(id);
+        result.setNextStep(c.step);
+        result.setData(new LinkedHashMap<>(c.data));
         return result;
     }
 
-    private AssistantResponse response(
-            String intent,
-            String message) {
-
-        return new AssistantResponse(
-                intent,
-                message,
-                false,
-                null,
-                null
-        );
-    }
-
-    private boolean isYes(String message) {
-        if (message == null) {
-            return false;
-        }
-
-        String text = message.trim().toLowerCase(Locale.ROOT);
-
-        return text.equals("yes")
-                || text.equals("y")
-                || text.equals("confirm")
-                || text.equals("confirmed")
-                || text.equals("save")
-                || text.equals("save it");
-    }
-
-    private boolean isNo(String message) {
-        if (message == null) {
-            return false;
-        }
-
-        String text = message.trim().toLowerCase(Locale.ROOT);
-
-        return text.equals("no")
-                || text.equals("n")
-                || text.equals("cancel")
-                || text.equals("stop")
-                || text.equals("no thanks");
-    }
-
-    private boolean isValidDate(String value) {
+    private String parseDate(String value) {
+        String text = value.trim().toLowerCase(Locale.ROOT);
+        if (text.equals("today")) return LocalDate.now().toString();
+        if (text.equals("yesterday")) return LocalDate.now().minusDays(1).toString();
         try {
-            LocalDate.parse(value);
-            return true;
-        } catch (DateTimeParseException exception) {
-            return false;
-        }
-    }
-
-    private Double parsePositiveNumber(String value) {
-        try {
-            double number = Double.parseDouble(value.trim());
-
-            if (Double.isFinite(number) && number > 0) {
-                return number;
-            }
-
-            return null;
-        } catch (NumberFormatException exception) {
+            return LocalDate.parse(value.trim()).toString();
+        } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    private boolean isYes(String value) {
+        if (value == null) return false;
+        return value.trim().matches("(?i)yes|y|confirm|confirmed|save|save it");
+    }
+
+    private boolean isNo(String value) {
+        if (value == null) return false;
+        return value.trim().matches("(?i)no|n|cancel|stop|no thanks");
+    }
+
+    private AssistantResponse response(String intent, String message) {
+        return new AssistantResponse(intent, message, false, null, null);
     }
 
     private static class Conversation {
-
         private final Long farmerId;
         private final String intent;
         private String step;
-
-        private final Map<String, Object> data =
-                new ConcurrentHashMap<>();
+        private final Map<String, Object> data = new ConcurrentHashMap<>();
 
         private Conversation(Long farmerId, String intent) {
             this.farmerId = farmerId;
