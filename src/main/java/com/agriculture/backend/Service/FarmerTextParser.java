@@ -34,10 +34,11 @@ public class FarmerTextParser {
             return response("GREETING",
                     "Namaste! 🌱 I am your smart **Farmer Assistant**.\n\n" +
                             "Here is what I can do for you:\n\n" +
-                            "🌾 **Crops**: *\"I am planting 5 acres of wheat\"*, *\"Show my crops\"*, *\"Delete crop tomato\"*\n" +
+                            "🌾 **Crops**: *\"I am planting 5 acres of wheat\"*, *\"Show my crops\"*, *\"Delete crop Tomato\"*\n" +
                             "🚜 **Farms**: *\"Add farm Green Valley in 10 acres at Guntur\"*, *\"Show my farms\"*, *\"Delete farm\"*\n" +
                             "🌾 **Harvests**: *\"Record harvest\"*, *\"My harvests\"*\n" +
-                            "🧺 **Products**: *\"Sell 100 kg of potatoes at ₹25\"*, *\"Existing stock\"*, *\"Delete product\"*\n" +
+                            "🧺 **Products**: *\"Sell 100 kg of potatoes at ₹25\"*, *\"Existing stock\"*, *\"Delete product Tomato\"*\n" +
+                            "📦 **Orders**: *\"Show my orders\"*, *\"Cancelled orders\"*, *\"Pending orders\"*\n" +
                             "💰 **Expenses**: *\"I spent ₹500 on fertilizer\"*, *\"My expenses\"*, *\"Total spent\"*\n\n" +
                             "What would you like to do today?");
         }
@@ -143,16 +144,36 @@ public class FarmerTextParser {
         }
 
         return response("UNKNOWN",
-                "I can help you add or delete crops, manage farms, list products, record expenses, record harvests, and check your farm records.\n\n" +
+                "I can help you add or delete crops, manage farms, list products, record expenses, record harvests, and view your customer orders.\n\n" +
                         "Try:\n" +
+                        "• \"Show my orders\"\n" +
+                        "• \"Cancelled orders\"\n" +
                         "• \"Show my crops\"\n" +
                         "• \"I am planting 5 acres of wheat\"\n" +
-                        "• \"Delete crop tomato\"\n" +
+                        "• \"Delete crop Tomato\"\n" +
                         "• \"Help me to add farm\"\n" +
                         "• \"My farms\"\n" +
                         "• \"Record my harvests\"\n" +
                         "• \"Existing stock\"\n" +
                         "• \"I spent ₹500 on fertilizer\"");
+    }
+
+    public boolean isOrderQuery(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+        if (lower.equals("orders") || lower.equals("order") || lower.equals("my orders")
+                || lower.equals("show orders") || lower.equals("show my orders")
+                || lower.equals("view orders") || lower.equals("list orders")
+                || lower.equals("check orders") || lower.equals("customer orders")
+                || lower.equals("cancelled orders") || lower.equals("canceled orders")
+                || lower.equals("pending orders") || lower.equals("delivered orders")
+                || lower.equals("shipped orders") || lower.equals("new orders")
+                || lower.equals("sales") || lower.equals("my sales")) {
+            return true;
+        }
+        boolean hasOrder = containsAny(lower, "order", "orders");
+        boolean hasQuery = containsAny(lower, "my", "show", "list", "view", "check", "all", "what", "any", "cancel", "cancelled", "canceled", "pending", "status", "delivered", "shipped", "recent", "customer");
+        return hasOrder && hasQuery;
     }
 
     public boolean isGreeting(String text) {

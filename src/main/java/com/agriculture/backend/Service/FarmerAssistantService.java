@@ -2,14 +2,18 @@ package com.agriculture.backend.Service;
 
 import com.agriculture.backend.dto.AssistantResponse;
 import com.agriculture.backend.entity.Crop;
+import com.agriculture.backend.entity.CustomerOrder;
 import com.agriculture.backend.entity.Farm;
 import com.agriculture.backend.entity.FarmerExpense;
 import com.agriculture.backend.entity.Harvest;
+import com.agriculture.backend.entity.OrderItem;
 import com.agriculture.backend.entity.Product;
 import com.agriculture.backend.repository.CropRepository;
 import com.agriculture.backend.repository.FarmRepository;
 import com.agriculture.backend.repository.FarmerExpenseRepository;
 import com.agriculture.backend.repository.HarvestRepository;
+import com.agriculture.backend.repository.OrderItemRepository;
+import com.agriculture.backend.repository.OrderRepository;
 import com.agriculture.backend.repository.ProductRepository;
 
 import org.springframework.stereotype.Service;
@@ -36,6 +40,8 @@ public class FarmerAssistantService {
     private final FarmerExpenseRepository expenseRepository;
     private final ProductRepository productRepository;
     private final HarvestRepository harvestRepository;
+    private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
 
     private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
 
@@ -45,7 +51,9 @@ public class FarmerAssistantService {
             FarmRepository farmRepository,
             FarmerExpenseRepository expenseRepository,
             ProductRepository productRepository,
-            HarvestRepository harvestRepository) {
+            HarvestRepository harvestRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository) {
 
         this.parser = parser;
         this.cropRepository = cropRepository;
@@ -53,6 +61,8 @@ public class FarmerAssistantService {
         this.expenseRepository = expenseRepository;
         this.productRepository = productRepository;
         this.harvestRepository = harvestRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
     }
 
     public AssistantResponse processMessage(
@@ -153,7 +163,12 @@ public class FarmerAssistantService {
             return answerHarvestQuestion(farmerId, lower);
         }
 
-        // 6. Read-only crop questions answered from saved database records
+        // 6. Order query (show orders, my orders, cancelled orders, pending orders)
+        if (parser.isOrderQuery(lower)) {
+            return answerOrderQuestion(farmerId, lower);
+        }
+
+        // 7. Read-only crop questions answered from saved database records
         if (isCropQuery(lower)) {
             return answerCropQuestion(farmerId, lower);
         }
@@ -271,11 +286,13 @@ public class FarmerAssistantService {
         return response(
                 "UNKNOWN",
                 "I can help you add or delete crops, register farms, list products, record expenses, " +
-                        "record harvests, and check your saved farm records.\n\n" +
+                        "record harvests, and view your customer orders.\n\n" +
                         "Try:\n" +
+                        "• \"Show my orders\"\n" +
+                        "• \"Cancelled orders\"\n" +
                         "• \"Show my crops\"\n" +
                         "• \"I am planting 5 acres of wheat\"\n" +
-                        "• \"Delete crop tomato\"\n" +
+                        "• \"Delete crop Tomato\"\n" +
                         "• \"Help me to add farm\"\n" +
                         "• \"My farms\"\n" +
                         "• \"Record my harvests\"\n" +
@@ -1326,7 +1343,7 @@ public class FarmerAssistantService {
         }
 
         answer.append(
-                "💡 *You can say \"add product\" to list a new item, or \"delete product <name>\" to remove an item.*");
+                "💡 *You can say \"add product\" to list a new item, or \"delete product Tomato\" to remove an item.*");
 
         return response("STOCK", answer.toString());
     }
@@ -1392,7 +1409,7 @@ public class FarmerAssistantService {
         }
 
         answer.append(
-                "💡 *You can say \"help me to add farm\" to register a new farm or \"delete farm by giving its name \" to remove a farm.*");
+                "💡 *You can say \"help me to add farm\" to register a new farm or \"delete farm Sunrise Acres\" to remove a farm.*");
 
         return response("FARMS", answer.toString());
     }
@@ -1421,9 +1438,151 @@ public class FarmerAssistantService {
                     .append("   • **Revenue**: ₹").append(h.getRevenue()).append("\n\n");
         }
 
-        answer.append("💡 *To record a new harvest, say \"record harvest\" or \"harvest <crop name>\".*");
+        answer.append("💡 *To record a new harvest, say \"record harvest\" or \"harvest Wheat\".*");
 
         return response("HARVESTS", answer.toString());
+    }
+
+    private AssistantResponse answerOrderQuestion(Long farmerId, String text) {
+        List<OrderItem> allFarmerItems = orderItemRepository.findByFarmerId(farmerId);
+        if (allFarmerItems == null || allFarmerItems.isEmpty()) {
+            return response(
+                    "ORDERS",
+                    "📦 **Customer Orders:**\n\nYou do not have any customer orders yet.\n\n" +
+                            "When customers order your products from the marketplace, their orders and statuses (placed, in transit, delivered, cancelled) will appear here!");
+        }
+
+        Map<Long, List<OrderItem>> itemsByOrder = new LinkedHashMap<>();
+        for (OrderItem item : allFarmerItems) {
+            if (item.getOrderId() != null) {
+                itemsByOrder.computeIfAbsent(item.getOrderId(), k -> new ArrayList<>()).add(item);
+            }
+        }
+
+        List<CustomerOrder> allOrders = new ArrayList<>();
+        for (Long orderId : itemsByOrder.keySet()) {
+            orderRepository.findById(orderId).ifPresent(allOrders::add);
+        }
+        allOrders.sort((a, b) -> Long.compare(b.getId(), a.getId()));
+
+        boolean filterCancelled = containsAny(text, "cancel", "cancelled", "canceled");
+        boolean filterPending = containsAny(text, "pending", "placed", "new order", "new orders");
+        boolean filterDelivered = containsAny(text, "delivered", "completed");
+        boolean filterShipped = containsAny(text, "shipped", "in transit");
+
+        List<CustomerOrder> matchedOrders = new ArrayList<>();
+        int placedCount = 0;
+        int inTransitCount = 0;
+        int deliveredCount = 0;
+        int cancelledCount = 0;
+
+        for (CustomerOrder o : allOrders) {
+            String st = o.getOrderStatus() != null ? o.getOrderStatus().trim().toUpperCase(Locale.ROOT) : "PLACED";
+            if ("CANCELLED".equals(st)) {
+                cancelledCount++;
+            } else if ("DELIVERED".equals(st)) {
+                deliveredCount++;
+            } else if ("SHIPPED".equals(st) || "PROCESSING".equals(st)) {
+                inTransitCount++;
+            } else {
+                placedCount++;
+            }
+
+            if (filterCancelled) {
+                if ("CANCELLED".equals(st)) matchedOrders.add(o);
+            } else if (filterPending) {
+                if ("PLACED".equals(st) || "PROCESSING".equals(st) || (!"DELIVERED".equals(st) && !"CANCELLED".equals(st))) {
+                    matchedOrders.add(o);
+                }
+            } else if (filterDelivered) {
+                if ("DELIVERED".equals(st)) matchedOrders.add(o);
+            } else if (filterShipped) {
+                if ("SHIPPED".equals(st)) matchedOrders.add(o);
+            } else {
+                matchedOrders.add(o);
+            }
+        }
+
+        if (filterCancelled && matchedOrders.isEmpty()) {
+            return response("ORDERS", "🚫 **Cancelled Orders:**\n\nYou have no cancelled orders! All your customer orders are active or delivered.");
+        }
+        if (filterPending && matchedOrders.isEmpty()) {
+            return response("ORDERS", "⏳ **Pending Orders:**\n\nYou currently have no pending orders waiting for fulfillment.");
+        }
+        if (filterDelivered && matchedOrders.isEmpty()) {
+            return response("ORDERS", "✅ **Delivered Orders:**\n\nYou do not have any delivered orders yet.");
+        }
+        if (filterShipped && matchedOrders.isEmpty()) {
+            return response("ORDERS", "🚚 **Shipped Orders:**\n\nYou do not have any orders currently marked as shipped.");
+        }
+
+        StringBuilder answer = new StringBuilder();
+        if (filterCancelled) {
+            answer.append("🚫 **Your Cancelled Customer Orders (Total: ").append(matchedOrders.size()).append("):**\n\n");
+        } else if (filterPending) {
+            answer.append("⏳ **Your Pending Customer Orders (Total: ").append(matchedOrders.size()).append("):**\n\n");
+        } else if (filterDelivered) {
+            answer.append("✅ **Your Delivered Customer Orders (Total: ").append(matchedOrders.size()).append("):**\n\n");
+        } else if (filterShipped) {
+            answer.append("🚚 **Your Shipped Customer Orders (Total: ").append(matchedOrders.size()).append("):**\n\n");
+        } else {
+            answer.append("📦 **Your Customer Orders (Total: ").append(allOrders.size()).append("):**\n\n");
+            answer.append("📊 **Overview**: ")
+                    .append(placedCount).append(" Placed | ")
+                    .append(inTransitCount).append(" In Transit | ")
+                    .append(deliveredCount).append(" Delivered | ")
+                    .append(cancelledCount).append(" Cancelled\n\n");
+        }
+
+        int index = 1;
+        for (CustomerOrder o : matchedOrders) {
+            List<OrderItem> items = itemsByOrder.get(o.getId());
+            double farmerTotal = items != null ? items.stream().mapToDouble(OrderItem::getTotalPrice).sum() : 0.0;
+            String status = o.getOrderStatus() != null ? o.getOrderStatus().trim().toUpperCase(Locale.ROOT) : "PLACED";
+
+            String statusDisplay = switch (status) {
+                case "CANCELLED" -> "CANCELLED 🔴";
+                case "DELIVERED" -> "DELIVERED 🟢";
+                case "SHIPPED" -> "SHIPPED 🚚";
+                case "PROCESSING" -> "PROCESSING 🟡";
+                default -> "PLACED 🟡";
+            };
+
+            answer.append(index++).append(". **Order #").append(o.getId()).append("** — Status: **").append(statusDisplay).append("**\n");
+            if (o.getCreatedAt() != null) {
+                answer.append("   • **Placed On**: ").append(o.getCreatedAt().toString().replace("T", " ")).append("\n");
+            }
+            if (o.getCancelledAt() != null && "CANCELLED".equals(status)) {
+                answer.append("   • **Cancelled On**: ").append(o.getCancelledAt().toString().replace("T", " ")).append("\n");
+            }
+            if (o.getCustomerName() != null && !o.getCustomerName().isBlank()) {
+                answer.append("   • **Customer**: ").append(o.getCustomerName());
+                if (o.getPhone() != null && !o.getPhone().isBlank()) {
+                    answer.append(" (Phone: ").append(o.getPhone()).append(")");
+                }
+                answer.append("\n");
+            }
+            if (items != null && !items.isEmpty()) {
+                answer.append("   • **Your Items in Order**:\n");
+                for (OrderItem it : items) {
+                    answer.append("     - ").append(it.getQuantity()).append(" kg **")
+                            .append(it.getProductName() != null ? it.getProductName() : "Product")
+                            .append("** @ ₹").append(it.getPricePerKg()).append("/kg (₹").append(it.getTotalPrice()).append(")\n");
+                }
+            }
+            answer.append("   • **Your Total Earnings**: ₹").append(farmerTotal).append("\n");
+            String loc = "";
+            if (o.getVillage() != null && !o.getVillage().isBlank()) loc += o.getVillage();
+            if (o.getDistrict() != null && !o.getDistrict().isBlank()) loc += (loc.isEmpty() ? "" : ", ") + o.getDistrict();
+            if (o.getState() != null && !o.getState().isBlank()) loc += (loc.isEmpty() ? "" : ", ") + o.getState();
+            if (!loc.isEmpty()) {
+                answer.append("   • **Delivery Destination**: ").append(loc).append("\n");
+            }
+            answer.append("\n");
+        }
+
+        answer.append("💡 *You can say \"cancelled orders\", \"pending orders\", or check your full orders list in the **Orders** section.*");
+        return response("ORDERS", answer.toString());
     }
 
     private AssistantResponse answerCropQuestion(
@@ -1503,7 +1662,7 @@ public class FarmerAssistantService {
         }
 
         answer.append(
-                "💡 *You can ask me to add a crop (e.g. \"I am planting 5 acres of wheat\"), delete a crop (e.g. \"delete crop <name/ID>\"), or record a harvest.*");
+                "💡 *You can ask me to add a crop (e.g. \"I am planting 5 acres of wheat\"), delete a crop (e.g. \"delete crop Tomato\"), or record a harvest.*");
 
         return response("CROPS", answer.toString());
     }
@@ -1567,7 +1726,7 @@ public class FarmerAssistantService {
         if (matchedList.size() > 5) {
             sb.append("... and ").append(matchedList.size() - 5).append(" earlier record(s).\n");
         }
-        sb.append("\n💡 *Say \"I spent ₹<amount> on <category>\" to record a new expense.*");
+        sb.append("\n💡 *Say \"I spent ₹500 on fertilizer\" to record a new expense.*");
 
         return response("EXPENSE_SUMMARY", sb.toString());
     }
@@ -1843,6 +2002,8 @@ public class FarmerAssistantService {
         if (isCropQuery(lower) || parser.isCropDelete(lower) || parser.isCropCreate(lower))
             return true;
         if (isExpenseSummaryQuestion(lower))
+            return true;
+        if (parser.isOrderQuery(lower))
             return true;
         if (isStockQuestion(lower))
             return true;
