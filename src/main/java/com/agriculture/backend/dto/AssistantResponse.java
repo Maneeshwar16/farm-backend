@@ -1,5 +1,6 @@
-
 package com.agriculture.backend.dto;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class AssistantResponse {
 
@@ -8,6 +9,9 @@ public class AssistantResponse {
     private boolean requiresConfirmation;
     private Double amount;
     private String category;
+    private String conversationId;
+    private String nextStep;
+    private Map<String, Object> data = new LinkedHashMap<>();
 
     public AssistantResponse() {
     }
@@ -64,5 +68,31 @@ public class AssistantResponse {
 
     public void setCategory(String category) {
         this.category = category;
+    }
+
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
+    public String getNextStep() {
+        return nextStep;
+    }
+
+    public void setNextStep(String nextStep) {
+        this.nextStep = nextStep;
+    }
+
+    public Map<String, Object> getData() {
+        return data;
+    }
+
+    public void setData(Map<String, Object> data) {
+        this.data = data == null
+                ? new LinkedHashMap<>()
+                : data;
     }
 }

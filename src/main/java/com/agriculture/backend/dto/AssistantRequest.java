@@ -1,11 +1,12 @@
-
 package com.agriculture.backend.dto;
 
 public class AssistantRequest {
 
     private String message;
     private Long farmerId;
+    private String conversationId;
     private boolean confirmed;
+    private boolean cancelled;
 
     public AssistantRequest() {
     }
@@ -26,11 +27,27 @@ public class AssistantRequest {
         this.farmerId = farmerId;
     }
 
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
     public boolean isConfirmed() {
         return confirmed;
     }
 
     public void setConfirmed(boolean confirmed) {
         this.confirmed = confirmed;
+    }
+
+    public boolean isCancelled() {
+        return cancelled;
+    }
+
+    public void setCancelled(boolean cancelled) {
+        this.cancelled = cancelled;
     }
 }
