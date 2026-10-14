@@ -14,16 +14,17 @@ public class FarmerAssistantController {
     private final FarmerAssistantService assistantService;
 
     public FarmerAssistantController(
-            FarmerAssistantService assistantService
-    ) {
+            FarmerAssistantService assistantService) {
         this.assistantService = assistantService;
     }
 
     @PostMapping("/message")
     public ResponseEntity<AssistantResponse> sendMessage(
-            @RequestBody AssistantRequest request
-    ) {
-        if (request == null || request.getMessage() == null) {
+            @RequestBody AssistantRequest request) {
+
+        if (request == null ||
+                request.getMessage() == null ||
+                request.getMessage().isBlank()) {
             return ResponseEntity.badRequest().body(
                     new AssistantResponse(
                             "UNKNOWN",
@@ -36,7 +37,11 @@ public class FarmerAssistantController {
         }
 
         AssistantResponse response =
-                assistantService.processMessage(request.getMessage());
+                assistantService.processMessage(
+                        request.getMessage(),
+                        request.getFarmerId(),
+                        request.isConfirmed()
+                );
 
         return ResponseEntity.ok(response);
     }
