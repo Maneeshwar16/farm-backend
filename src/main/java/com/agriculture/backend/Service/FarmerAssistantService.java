@@ -153,52 +153,57 @@ public class FarmerAssistantService {
             return startProductDeleteConversation(farmerId, target);
         }
 
-        // 4. Farm query (show farms, my farms, list farms)
-        if (parser.isFarmQuery(lower)) {
-            return answerFarmQuestion(farmerId, lower);
-        }
-
-        // 5. Harvest query (show harvests, my harvests, harvest records)
-        if (parser.isHarvestQuery(lower)) {
-            return answerHarvestQuestion(farmerId, lower);
-        }
-
-        // 6. Order query (show orders, my orders, cancelled orders, pending orders)
-        if (parser.isOrderQuery(lower)) {
-            return answerOrderQuestion(farmerId, lower);
-        }
-
-        // 7. Read-only crop questions answered from saved database records
-        if (isCropQuery(lower)) {
-            return answerCropQuestion(farmerId, lower);
-        }
-
-        // 7. Expense summary questions
-        if (isExpenseSummaryQuestion(lower)) {
-            return answerExpenseQuestion(farmerId, lower);
-        }
-
-        // 8. Stock / product summary questions
-        if (isStockQuestion(lower)) {
-            return answerStockQuestion(farmerId, lower);
-        }
-
-        // 9. Farm creation request (add farm, help me to add farm)
+        // 4. Farm creation request (add farm, help me to add farm, add arm)
         if (parser.isFarmCreate(lower)) {
             return startFarmConversation(farmerId, text);
         }
 
-        // 10. Harvest requests (record harvest, record my harvests)
+        // 5. Crop creation request (add crop, planting wheat, etc.)
+        if (parser.isCropCreate(lower)) {
+            return startCropConversation(farmerId, text);
+        }
+
+        // 6. Harvest requests (record harvest, record my harvests)
         if (isHarvestRequest(lower)) {
             return startHarvestConversation(farmerId, text);
         }
 
-        // 11. Product creation requests
+        // 7. Product creation requests (sell 100 kg...)
         if (isProductCreateRequest(lower)) {
             return startProductConversation(farmerId, text);
         }
 
-        // 12. Parse message using FarmerTextParser
+        // 8. Farm query (show farms, my farms, list farms)
+        if (parser.isFarmQuery(lower)) {
+            return answerFarmQuestion(farmerId, lower);
+        }
+
+        // 9. Harvest query (show harvests, my harvests, harvest records)
+        if (parser.isHarvestQuery(lower)) {
+            return answerHarvestQuestion(farmerId, lower);
+        }
+
+        // 10. Order query (show orders, my orders, cancelled orders, pending orders)
+        if (parser.isOrderQuery(lower)) {
+            return answerOrderQuestion(farmerId, lower);
+        }
+
+        // 11. Read-only crop questions answered from saved database records
+        if (isCropQuery(lower)) {
+            return answerCropQuestion(farmerId, lower);
+        }
+
+        // 12. Expense summary questions
+        if (isExpenseSummaryQuestion(lower)) {
+            return answerExpenseQuestion(farmerId, lower);
+        }
+
+        // 13. Stock / product summary questions
+        if (isStockQuestion(lower)) {
+            return answerStockQuestion(farmerId, lower);
+        }
+
+        // 14. Parse message using FarmerTextParser
         AssistantResponse parsed = parser.parse(text);
 
         if ("GREETING".equals(parsed.getIntent())) {
@@ -220,21 +225,7 @@ public class FarmerAssistantService {
         }
 
         if ("CROP_CREATE".equals(parsed.getIntent())) {
-            Conversation crop = new Conversation(farmerId, "CROP_CREATE");
-
-            if (parsed.getData() != null) {
-                crop.data.putAll(parsed.getData());
-            }
-
-            crop.step = parser.nextCropStep(crop.data);
-            String id = UUID.randomUUID().toString();
-            conversations.put(id, crop);
-
-            if ("CONFIRM_CROP".equals(crop.step)) {
-                return cropSummary(crop, id);
-            }
-
-            return question(crop, id, parser.cropQuestion(crop.step));
+            return startCropConversation(farmerId, text);
         }
 
         if ("HARVEST".equals(parsed.getIntent())) {
@@ -298,6 +289,26 @@ public class FarmerAssistantService {
                         "• \"Record my harvests\"\n" +
                         "• \"Existing stock\"\n" +
                         "• \"I spent ₹500 on fertilizer\"");
+    }
+
+    // ---------------------------------------------------------
+    // CROP REGISTRATION FLOW
+    // ---------------------------------------------------------
+
+    private AssistantResponse startCropConversation(Long farmerId, String text) {
+        Map<String, Object> data = parser.extractCropDetails(text);
+        Conversation crop = new Conversation(farmerId, "CROP_CREATE");
+        crop.data.putAll(data);
+        crop.step = parser.nextCropStep(crop.data);
+
+        String id = UUID.randomUUID().toString();
+        conversations.put(id, crop);
+
+        if ("CONFIRM_CROP".equals(crop.step)) {
+            return cropSummary(crop, id);
+        }
+
+        return question(crop, id, parser.cropQuestion(crop.step));
     }
 
     // ---------------------------------------------------------
@@ -1007,7 +1018,11 @@ public class FarmerAssistantService {
         if (c.intent.equals("CROP_CREATE")) {
             switch (c.step) {
                 case "CROP_NAME":
-                    c.data.put("cropName", answer.trim());
+                    String nameAns = answer.trim();
+                    if (nameAns.isBlank()) {
+                        return question(c, id, "Which crop are you planting? (e.g. Wheat, Cotton, Rice, Tomato, Maize)");
+                    }
+                    c.data.put("cropName", parser.titleCase(nameAns));
                     break;
                 case "AREA":
                     Matcher areaMatcher = Pattern.compile("(\\d+(?:\\.\\d+)?)").matcher(answer);
@@ -1024,6 +1039,54 @@ public class FarmerAssistantService {
                         c.data.put("areaUnit", "Acres");
                     }
                     break;
+                case "CROP_SOIL":
+                    String sText = answer.trim();
+                    if (sText.isBlank()) {
+                        return question(c, id, "What type of soil is this crop planted in? (e.g. Black Soil, Red Soil, Alluvial Soil, Sandy Soil, Clay Soil, Loamy Soil)");
+                    }
+                    String sLower = sText.toLowerCase(Locale.ROOT);
+                    if (sLower.contains("red")) c.data.put("soilType", "Red Soil");
+                    else if (sLower.contains("black")) c.data.put("soilType", "Black Soil");
+                    else if (sLower.contains("sandy")) c.data.put("soilType", "Sandy Soil");
+                    else if (sLower.contains("clay")) c.data.put("soilType", "Clay Soil");
+                    else if (sLower.contains("alluvial")) c.data.put("soilType", "Alluvial Soil");
+                    else if (sLower.contains("loam")) c.data.put("soilType", "Loamy Soil");
+                    else c.data.put("soilType", parser.titleCase(sText));
+                    break;
+                case "CROP_IRRIGATION":
+                    String iText = answer.trim();
+                    if (iText.isBlank()) {
+                        return question(c, id, "What irrigation method do you use for this crop? (e.g. Drip, Sprinkler, Flood, Rainfed)");
+                    }
+                    String iLower = iText.toLowerCase(Locale.ROOT);
+                    if (iLower.contains("drip")) c.data.put("irrigationMethod", "Drip");
+                    else if (iLower.contains("sprinkler")) c.data.put("irrigationMethod", "Sprinkler");
+                    else if (iLower.contains("flood")) c.data.put("irrigationMethod", "Flood");
+                    else if (iLower.contains("rain")) c.data.put("irrigationMethod", "Rain-fed");
+                    else c.data.put("irrigationMethod", parser.titleCase(iText));
+                    break;
+                case "CROP_PLANTING_DATE":
+                    String pDate = parseDateInput(answer.trim(), LocalDate.now());
+                    c.data.put("plantingDate", pDate);
+                    break;
+                case "CROP_HARVEST_DATE":
+                    LocalDate baseDate = LocalDate.now();
+                    if (c.data.get("plantingDate") != null) {
+                        try {
+                            baseDate = LocalDate.parse(String.valueOf(c.data.get("plantingDate")));
+                        } catch (Exception ignored) {}
+                    }
+                    String hDate = parseHarvestDateInput(answer.trim(), baseDate);
+                    c.data.put("expectedHarvestDate", hDate);
+                    break;
+                case "CROP_VARIETY":
+                    String vText = answer.trim();
+                    if (vText.equalsIgnoreCase("skip") || vText.equalsIgnoreCase("none") || vText.equalsIgnoreCase("default") || vText.isBlank()) {
+                        c.data.put("variety", "Standard");
+                    } else {
+                        c.data.put("variety", parser.titleCase(vText));
+                    }
+                    break;
                 default:
                     break;
             }
@@ -1038,15 +1101,23 @@ public class FarmerAssistantService {
         if (c.intent.equals("FARM_CREATE")) {
             switch (c.step) {
                 case "FARM_NAME":
-                    c.data.put("farmName", answer.trim());
+                    String fName = answer.trim();
+                    if (fName.isBlank()) {
+                        return question(c, id, "What is the name of your farm? (e.g. Green Valley Farm, Sunrise Acres)");
+                    }
+                    c.data.put("farmName", parser.titleCase(fName));
                     break;
                 case "FARM_LOCATION":
-                    c.data.put("location", answer.trim());
+                    String locAns = answer.trim();
+                    if (locAns.isBlank()) {
+                        return question(c, id, "What is the location or village of the farm? (e.g. Hyderabad, Guntur, Vijayawada)");
+                    }
+                    c.data.put("location", parser.titleCase(locAns));
                     break;
                 case "FARM_AREA":
                     Matcher areaMatcher = Pattern.compile("(\\d+(?:\\.\\d+)?)").matcher(answer);
                     if (!areaMatcher.find() || Double.parseDouble(areaMatcher.group(1)) <= 0) {
-                        return question(c, id, "Please enter a positive area number, such as 10 acres or 5.");
+                        return question(c, id, "Please enter a positive area number, such as 10 acres or 5 hectares.");
                     }
                     c.data.put("area", Double.parseDouble(areaMatcher.group(1)));
                     String areaText = answer.toLowerCase(Locale.ROOT);
@@ -1057,6 +1128,32 @@ public class FarmerAssistantService {
                     } else {
                         c.data.put("areaUnit", "Acres");
                     }
+                    break;
+                case "FARM_SOIL":
+                    String soilAns = answer.trim();
+                    if (soilAns.isBlank()) {
+                        return question(c, id, "What type of soil does this farm have? (e.g. Red Soil, Black Soil, Alluvial Soil, Sandy Soil, Clay Soil, Loamy Soil, Other)");
+                    }
+                    String soilLower = soilAns.toLowerCase(Locale.ROOT);
+                    if (soilLower.contains("red")) c.data.put("soilType", "Red Soil");
+                    else if (soilLower.contains("black")) c.data.put("soilType", "Black Soil");
+                    else if (soilLower.contains("sandy")) c.data.put("soilType", "Sandy Soil");
+                    else if (soilLower.contains("clay")) c.data.put("soilType", "Clay Soil");
+                    else if (soilLower.contains("alluvial")) c.data.put("soilType", "Alluvial Soil");
+                    else if (soilLower.contains("loam")) c.data.put("soilType", "Loamy Soil");
+                    else c.data.put("soilType", parser.titleCase(soilAns));
+                    break;
+                case "FARM_IRRIGATION":
+                    String irrAns = answer.trim();
+                    if (irrAns.isBlank()) {
+                        return question(c, id, "What irrigation method do you use? (e.g. Drip Irrigation, Sprinkler Irrigation, Flood Irrigation, Rainfed)");
+                    }
+                    String irrLower = irrAns.toLowerCase(Locale.ROOT);
+                    if (irrLower.contains("drip")) c.data.put("irrigationMethod", "Drip Irrigation");
+                    else if (irrLower.contains("sprinkler")) c.data.put("irrigationMethod", "Sprinkler Irrigation");
+                    else if (irrLower.contains("flood")) c.data.put("irrigationMethod", "Flood Irrigation");
+                    else if (irrLower.contains("rain")) c.data.put("irrigationMethod", "Rainfed");
+                    else c.data.put("irrigationMethod", parser.titleCase(irrAns));
                     break;
                 default:
                     break;
@@ -1109,10 +1206,10 @@ public class FarmerAssistantService {
             farm.setLocation(String.valueOf(c.data.get("location")));
             farm.setArea(c.data.get("area") != null ? ((Number) c.data.get("area")).doubleValue() : 1.0);
             farm.setAreaUnit(c.data.get("areaUnit") != null ? String.valueOf(c.data.get("areaUnit")) : "Acres");
-            farm.setSoilType(c.data.get("soilType") != null ? String.valueOf(c.data.get("soilType")) : "Loamy soil");
+            farm.setSoilType(c.data.get("soilType") != null ? String.valueOf(c.data.get("soilType")) : "Red Soil");
             farm.setIrrigationMethod(
                     c.data.get("irrigationMethod") != null ? String.valueOf(c.data.get("irrigationMethod"))
-                            : "Drip irrigation");
+                            : "Drip Irrigation");
 
             Farm saved = farmRepository.save(farm);
             conversations.remove(id);
@@ -1123,7 +1220,8 @@ public class FarmerAssistantService {
                             "• Farm ID: #" + saved.getId() + "\n" +
                             "• Location: " + saved.getLocation() + "\n" +
                             "• Total Area: " + saved.getArea() + " " + saved.getAreaUnit() + "\n" +
-                            "• Soil & Irrigation: " + saved.getSoilType() + " / " + saved.getIrrigationMethod(),
+                            "• Soil Type: " + saved.getSoilType() + "\n" +
+                            "• Irrigation: " + saved.getIrrigationMethod(),
                     id);
         }
 
@@ -1165,23 +1263,21 @@ public class FarmerAssistantService {
             Crop crop = new Crop();
             crop.setFarmerId(c.farmerId);
             crop.setCropName(String.valueOf(c.data.get("cropName")));
+            crop.setVariety(c.data.get("variety") != null ? String.valueOf(c.data.get("variety")) : "Standard");
             crop.setPlantingDate(c.data.get("plantingDate") != null ? String.valueOf(c.data.get("plantingDate"))
                     : LocalDate.now().toString());
-            crop.setSoilType(c.data.get("soilType") != null ? String.valueOf(c.data.get("soilType")) : "Loamy");
+            crop.setExpectedHarvestDate(
+                    c.data.get("expectedHarvestDate") != null ? String.valueOf(c.data.get("expectedHarvestDate"))
+                            : LocalDate.now().plusDays(90).toString());
+            crop.setSoilType(c.data.get("soilType") != null ? String.valueOf(c.data.get("soilType")) : "Red Soil");
+            crop.setIrrigationMethod(
+                    c.data.get("irrigationMethod") != null ? String.valueOf(c.data.get("irrigationMethod")) : "Drip");
             crop.setArea(c.data.get("area") != null ? ((Number) c.data.get("area")).doubleValue() : 1.0);
             crop.setAreaUnit(c.data.get("areaUnit") != null ? String.valueOf(c.data.get("areaUnit")) : "Acres");
-            crop.setVariety(c.data.get("variety") != null ? String.valueOf(c.data.get("variety")) : "Standard");
             crop.setSeedSource(
                     c.data.get("seedSource") != null ? String.valueOf(c.data.get("seedSource")) : "Certified Seeds");
             crop.setFertilizerUsed(c.data.get("fertilizerUsed") != null ? String.valueOf(c.data.get("fertilizerUsed"))
                     : "Standard Organic");
-            crop.setIrrigationMethod(
-                    c.data.get("irrigationMethod") != null ? String.valueOf(c.data.get("irrigationMethod")) : "Drip");
-            crop.setExpectedHarvestDate(
-                    c.data.get("expectedHarvestDate") != null ? String.valueOf(c.data.get("expectedHarvestDate"))
-                            : LocalDate.now().plusDays(90).toString());
-            // Store as "Seeded / Planted" so it directly corresponds to the active stage on
-            // the /mycrop page!
             crop.setCropStatus("Seeded / Planted");
 
             Crop saved = cropRepository.save(crop);
@@ -1191,7 +1287,10 @@ public class FarmerAssistantService {
                     "CROP_SAVED",
                     "🌱 Crop **" + saved.getCropName() + "** has been saved successfully!\n\n" +
                             "• Crop ID: #" + saved.getId() + "\n" +
+                            "• Variety: " + saved.getVariety() + "\n" +
                             "• Cultivated Area: " + saved.getArea() + " " + saved.getAreaUnit() + "\n" +
+                            "• Soil Type: " + saved.getSoilType() + "\n" +
+                            "• Irrigation: " + saved.getIrrigationMethod() + "\n" +
                             "• Planting Date: " + saved.getPlantingDate() + "\n" +
                             "• Expected Harvest: " + saved.getExpectedHarvestDate() + "\n" +
                             "• Status: " + saved.getCropStatus() + "\n\n" +
@@ -1758,18 +1857,67 @@ public class FarmerAssistantService {
                 c, id,
                 "🌱 **Please confirm your crop details:**\n\n" +
                         "• **Crop**: " + c.data.get("cropName") + "\n" +
+                        "• **Variety**: " + (c.data.get("variety") != null ? c.data.get("variety") : "Standard") + "\n" +
                         "• **Area**: " + c.data.get("area") + " "
                         + (c.data.get("areaUnit") != null ? c.data.get("areaUnit") : "Acres") + "\n" +
+                        "• **Soil Type**: " + (c.data.get("soilType") != null ? c.data.get("soilType") : "Red Soil") + "\n" +
+                        "• **Irrigation**: " + (c.data.get("irrigationMethod") != null ? c.data.get("irrigationMethod") : "Drip") + "\n" +
                         "• **Planting Date**: " + c.data.get("plantingDate") + "\n" +
                         "• **Expected Harvest Date**: " + c.data.get("expectedHarvestDate") + "\n" +
-                        "• **Status**: " + c.data.get("cropStatus") + "\n" +
-                        "• **Soil & Irrigation**: " + c.data.get("soilType") + " / " + c.data.get("irrigationMethod")
+                        "• **Status**: " + (c.data.get("cropStatus") != null ? c.data.get("cropStatus") : "Seeded / Planted")
                         + "\n\n" +
                         "Reply **YES** to save to your records or **NO** to cancel.");
 
         result.setRequiresConfirmation(true);
         result.setNextStep("CONFIRM_CROP");
         return result;
+    }
+
+    private String parseDateInput(String input, LocalDate defaultDate) {
+        if (input == null || input.isBlank() || input.equalsIgnoreCase("today") || input.equalsIgnoreCase("now")
+                || input.equalsIgnoreCase("skip") || input.equalsIgnoreCase("default")) {
+            return defaultDate.toString();
+        }
+        if (input.equalsIgnoreCase("yesterday")) {
+            return defaultDate.minusDays(1).toString();
+        }
+        if (input.equalsIgnoreCase("tomorrow")) {
+            return defaultDate.plusDays(1).toString();
+        }
+        Matcher mIso = Pattern.compile("(\\d{4}-\\d{1,2}-\\d{1,2})").matcher(input);
+        if (mIso.find()) {
+            try {
+                return LocalDate.parse(mIso.group(1)).toString();
+            } catch (Exception ignored) {}
+        }
+        Matcher mDmy = Pattern.compile("(\\d{1,2})[-/](\\d{1,2})[-/](\\d{4})").matcher(input);
+        if (mDmy.find()) {
+            try {
+                int day = Integer.parseInt(mDmy.group(1));
+                int month = Integer.parseInt(mDmy.group(2));
+                int year = Integer.parseInt(mDmy.group(3));
+                return LocalDate.of(year, month, day).toString();
+            } catch (Exception ignored) {}
+        }
+        return defaultDate.toString();
+    }
+
+    private String parseHarvestDateInput(String input, LocalDate plantingDate) {
+        if (input == null || input.isBlank() || input.equalsIgnoreCase("skip")
+                || input.equalsIgnoreCase("standard") || input.equalsIgnoreCase("default")) {
+            return plantingDate.plusDays(90).toString();
+        }
+        Matcher mMonths = Pattern.compile("(\\d+)\\s*months?", Pattern.CASE_INSENSITIVE).matcher(input);
+        if (mMonths.find()) {
+            int m = Integer.parseInt(mMonths.group(1));
+            return plantingDate.plusMonths(m).toString();
+        }
+        Matcher mDays = Pattern.compile("(\\d+)\\s*days?", Pattern.CASE_INSENSITIVE).matcher(input);
+        if (mDays.find()) {
+            int d = Integer.parseInt(mDays.group(1));
+            return plantingDate.plusDays(d).toString();
+        }
+        return parseDateInput(input, plantingDate.plusDays(90));
     }
 
     private AssistantResponse question(

@@ -179,6 +179,11 @@ public class FarmerTextParser {
     public boolean isGreeting(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT).trim().replaceAll("^[!?,.]+|[!?,.]+$", "").trim();
+        // Action commands should NEVER be treated as greetings
+        if (containsAny(lower, "farm", "crop", "harvest", "order", "product", "expense", "spent", "paid",
+                "add", "create", "delete", "remove", "register", "list product", "sell", "plant", "arm")) {
+            return false;
+        }
         if (lower.equals("hi") || lower.equals("hello") || lower.equals("hey")
                 || lower.equals("namaste") || lower.equals("help") || lower.equals("start")
                 || lower.equals("menu") || lower.equals("options") || lower.equals("commands")
@@ -186,7 +191,7 @@ public class FarmerTextParser {
             return true;
         }
         if (lower.startsWith("hi ") || lower.startsWith("hello ") || lower.startsWith("hey ")
-                || lower.startsWith("namaste ") || lower.startsWith("help ")) {
+                || lower.startsWith("namaste ")) {
             return true;
         }
         return lower.contains("who are you") || lower.contains("what can you do")
@@ -198,10 +203,12 @@ public class FarmerTextParser {
     public boolean isFarmCreate(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT);
-        if (lower.contains("delete") || lower.contains("remove")) return false;
+        if (containsAny(lower, "delete", "remove", "drop", "erase")) return false;
         return lower.contains("add farm") || lower.contains("new farm") || lower.contains("create farm")
                 || lower.contains("register farm") || lower.contains("help me to add farm")
-                || lower.contains("record farm");
+                || lower.contains("add arm") || lower.contains("create arm") || lower.contains("register arm")
+                || lower.contains("record farm")
+                || (lower.contains("add") && (lower.contains("farm") || lower.contains("land") || lower.contains("arm")));
     }
 
     public boolean isFarmDelete(String text) {
@@ -216,6 +223,10 @@ public class FarmerTextParser {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT).trim().replaceAll("^[!?,.]+|[!?,.]+$", "").trim();
         if (isFarmCreate(lower) || isFarmDelete(lower)) return false;
+        // Creation or deletion phrases should never be treated as read-only queries
+        if (containsAny(lower, "add", "create", "new", "register", "delete", "remove", "drop", "erase", "cancel", "arm")) {
+            return false;
+        }
         if (lower.equals("farms") || lower.equals("farm") || lower.equals("my farms") || lower.equals("my farm")
                 || lower.equals("myfarms") || lower.equals("show farms") || lower.equals("list farms")
                 || lower.equals("existing farms") || lower.equals("view farms") || lower.equals("all farms")
@@ -350,10 +361,34 @@ public class FarmerTextParser {
             }
         }
 
-        // Defaults
-        data.put("soilType", "Loamy soil");
-        data.put("irrigationMethod", "Drip irrigation");
-        if (!data.containsKey("areaUnit")) {
+        // Soil type if explicitly specified
+        String lowerMsg = message.toLowerCase(Locale.ROOT);
+        if (containsAny(lowerMsg, "red soil", "red")) {
+            data.put("soilType", "Red Soil");
+        } else if (containsAny(lowerMsg, "black soil", "black")) {
+            data.put("soilType", "Black Soil");
+        } else if (containsAny(lowerMsg, "sandy soil", "sandy")) {
+            data.put("soilType", "Sandy Soil");
+        } else if (containsAny(lowerMsg, "clay soil", "clay")) {
+            data.put("soilType", "Clay Soil");
+        } else if (containsAny(lowerMsg, "alluvial soil", "alluvial")) {
+            data.put("soilType", "Alluvial Soil");
+        } else if (containsAny(lowerMsg, "loamy soil", "loamy", "loam")) {
+            data.put("soilType", "Loamy Soil");
+        }
+
+        // Irrigation method if explicitly specified
+        if (containsAny(lowerMsg, "drip irrigation", "drip")) {
+            data.put("irrigationMethod", "Drip Irrigation");
+        } else if (containsAny(lowerMsg, "sprinkler")) {
+            data.put("irrigationMethod", "Sprinkler Irrigation");
+        } else if (containsAny(lowerMsg, "flood")) {
+            data.put("irrigationMethod", "Flood Irrigation");
+        } else if (containsAny(lowerMsg, "rainfed", "rain-fed", "rain")) {
+            data.put("irrigationMethod", "Rainfed");
+        }
+
+        if (data.containsKey("area") && !data.containsKey("areaUnit")) {
             data.put("areaUnit", "Acres");
         }
 
@@ -370,6 +405,15 @@ public class FarmerTextParser {
         if (!data.containsKey("area") || blank(data.get("area"))) {
             return "FARM_AREA";
         }
+        if (!data.containsKey("areaUnit") || blank(data.get("areaUnit"))) {
+            data.put("areaUnit", "Acres");
+        }
+        if (!data.containsKey("soilType") || blank(data.get("soilType"))) {
+            return "FARM_SOIL";
+        }
+        if (!data.containsKey("irrigationMethod") || blank(data.get("irrigationMethod"))) {
+            return "FARM_IRRIGATION";
+        }
         return "CONFIRM_FARM";
     }
 
@@ -378,11 +422,15 @@ public class FarmerTextParser {
             case "FARM_NAME":
                 return "What is the name of your farm? (e.g. Green Valley Farm, Sunrise Acres)";
             case "FARM_LOCATION":
-                return "What is the location or village of the farm? (e.g. Guntur, Vijayawada)";
+                return "What is the location or village of the farm? (e.g. Hyderabad, Guntur, Vijayawada)";
             case "FARM_AREA":
-                return "How much total land area is this farm? (e.g. 10 acres, 5 hectares)";
+                return "How much total land area is this farm? (e.g. 10 acres, 5 hectares, 25 acres)";
+            case "FARM_SOIL":
+                return "What type of soil does this farm have? (e.g. Red Soil, Black Soil, Alluvial Soil, Sandy Soil, Clay Soil, Loamy Soil, Other)";
+            case "FARM_IRRIGATION":
+                return "What irrigation method do you use? (e.g. Drip Irrigation, Sprinkler Irrigation, Flood Irrigation, Rainfed)";
             case "CONFIRM_FARM":
-                return "All details are collected. Reply YES to save or NO to cancel.";
+                return "All details are collected. Reply YES to save to your records or NO to cancel.";
             default:
                 return "Please provide the requested farm detail.";
         }
@@ -473,21 +521,19 @@ public class FarmerTextParser {
             data.put("cropName", titleCase(extractedCropName.trim()));
         }
 
-        // 3. Extract Planting Date
+        // 3. Extract Planting Date if explicitly provided
         Matcher date = Pattern.compile("\\b\\d{4}-\\d{2}-\\d{2}\\b").matcher(message);
         try {
             if (date.find()) {
                 data.put("plantingDate", LocalDate.parse(date.group()).toString());
             } else if (text.contains("yesterday")) {
                 data.put("plantingDate", LocalDate.now().minusDays(1).toString());
-            } else {
+            } else if (text.contains("today")) {
                 data.put("plantingDate", LocalDate.now().toString());
             }
-        } catch (DateTimeParseException ignored) {
-            data.put("plantingDate", LocalDate.now().toString());
-        }
+        } catch (DateTimeParseException ignored) {}
 
-        // 4. Expected Harvest Date
+        // 4. Expected Harvest Date if explicitly provided
         Matcher harvestDateMatcher = Pattern.compile(
                 "\\b(?:expected harvest|harvest date)\\s+(?:is\\s+)?(\\d{4}-\\d{2}-\\d{2})\\b",
                 Pattern.CASE_INSENSITIVE).matcher(message);
@@ -496,25 +542,16 @@ public class FarmerTextParser {
                 data.put("expectedHarvestDate", LocalDate.parse(harvestDateMatcher.group(1)).toString());
             } catch (DateTimeParseException ignored) {}
         }
-        if (!data.containsKey("expectedHarvestDate")) {
-            LocalDate pDate = LocalDate.now();
-            if (data.get("plantingDate") != null) {
-                try {
-                    pDate = LocalDate.parse(String.valueOf(data.get("plantingDate")));
-                } catch (Exception ignored) {}
-            }
-            data.put("expectedHarvestDate", pDate.plusDays(90).toString());
-        }
 
-        // 5. Soil Type
-        if (text.contains("red soil") || text.contains("red")) data.put("soilType", "Red soil");
-        else if (text.contains("black soil") || text.contains("black")) data.put("soilType", "Black soil");
-        else if (text.contains("sandy soil") || text.contains("sandy")) data.put("soilType", "Sandy soil");
-        else if (text.contains("clay soil") || text.contains("clay")) data.put("soilType", "Clay soil");
-        else if (text.contains("alluvial soil") || text.contains("alluvial")) data.put("soilType", "Alluvial soil");
-        else data.put("soilType", "Loamy");
+        // 5. Soil Type if explicitly provided
+        if (text.contains("red soil") || text.contains("red")) data.put("soilType", "Red Soil");
+        else if (text.contains("black soil") || text.contains("black")) data.put("soilType", "Black Soil");
+        else if (text.contains("sandy soil") || text.contains("sandy")) data.put("soilType", "Sandy Soil");
+        else if (text.contains("clay soil") || text.contains("clay")) data.put("soilType", "Clay Soil");
+        else if (text.contains("alluvial soil") || text.contains("alluvial")) data.put("soilType", "Alluvial Soil");
+        else if (text.contains("loamy soil") || text.contains("loamy") || text.contains("loam")) data.put("soilType", "Loamy Soil");
 
-        // 6. Irrigation Method
+        // 6. Irrigation Method if explicitly provided
         if (text.contains("drip irrigation") || text.contains("drip")) {
             data.put("irrigationMethod", "Drip");
         } else if (text.contains("sprinkler")) {
@@ -523,40 +560,31 @@ public class FarmerTextParser {
             data.put("irrigationMethod", "Flood");
         } else if (text.contains("rain-fed") || text.contains("rainfed") || text.contains("rain")) {
             data.put("irrigationMethod", "Rain-fed");
-        } else {
-            data.put("irrigationMethod", "Drip");
         }
 
-        // 7. Variety
+        // 7. Variety if explicitly provided
         Matcher variety = Pattern.compile(
                 "\\bvariety\\s+(?:is\\s+)?([a-zA-Z0-9 -]+?)(?=\\s+(?:on|with|in)|[,.;]|$)",
                 Pattern.CASE_INSENSITIVE).matcher(message);
         if (variety.find()) {
-            data.put("variety", variety.group(1).trim());
-        } else {
-            data.put("variety", "Standard");
+            data.put("variety", titleCase(variety.group(1).trim()));
         }
 
-        // 8. Seed Source
+        // 8. Seed Source if explicitly provided
         Matcher seeds = Pattern.compile(
                 "\\bseed source\\s+(?:is\\s+)?(.+?)(?=[,.;]|$)",
                 Pattern.CASE_INSENSITIVE).matcher(message);
         if (seeds.find()) {
-            data.put("seedSource", seeds.group(1).trim());
-        } else {
-            data.put("seedSource", "Certified Seeds");
+            data.put("seedSource", titleCase(seeds.group(1).trim()));
         }
 
-        // 9. Fertilizer Used
+        // 9. Fertilizer Used if explicitly provided
         Matcher fertilizer = Pattern.compile(
                 "\\bfertilizer\\s+(?:is\\s+|used\\s+)?(.+?)(?=[,.;]|$)",
                 Pattern.CASE_INSENSITIVE).matcher(message);
         if (fertilizer.find()) {
             String val = fertilizer.group(1).trim();
-            if (!val.isBlank()) data.put("fertilizerUsed", val);
-        }
-        if (!data.containsKey("fertilizerUsed")) {
-            data.put("fertilizerUsed", "Standard Organic");
+            if (!val.isBlank()) data.put("fertilizerUsed", titleCase(val));
         }
 
         // 10. Default cropStatus matches /mycrop active stage
@@ -575,17 +603,42 @@ public class FarmerTextParser {
         if (!data.containsKey("areaUnit") || blank(data.get("areaUnit"))) {
             data.put("areaUnit", "Acres");
         }
+        if (!data.containsKey("soilType") || blank(data.get("soilType"))) {
+            return "CROP_SOIL";
+        }
+        if (!data.containsKey("irrigationMethod") || blank(data.get("irrigationMethod"))) {
+            return "CROP_IRRIGATION";
+        }
+        if (!data.containsKey("plantingDate") || blank(data.get("plantingDate"))) {
+            return "CROP_PLANTING_DATE";
+        }
+        if (!data.containsKey("expectedHarvestDate") || blank(data.get("expectedHarvestDate"))) {
+            return "CROP_HARVEST_DATE";
+        }
+        if (!data.containsKey("variety") || blank(data.get("variety"))) {
+            return "CROP_VARIETY";
+        }
         return "CONFIRM_CROP";
     }
 
     public String cropQuestion(String step) {
         switch (step) {
             case "CROP_NAME":
-                return "Which crop are you planting? (e.g. Wheat, Tomato, Rice, Maize)";
+                return "Which crop are you planting? (e.g. Wheat, Cotton, Rice, Tomato, Maize)";
             case "AREA":
                 return "How much land area are you planting? (e.g. 5 acres, 2.5 hectares)";
+            case "CROP_SOIL":
+                return "What type of soil is this crop planted in? (e.g. Black Soil, Red Soil, Alluvial Soil, Sandy Soil, Clay Soil, Loamy Soil)";
+            case "CROP_IRRIGATION":
+                return "What irrigation method do you use for this crop? (e.g. Drip, Sprinkler, Flood, Rainfed)";
+            case "CROP_PLANTING_DATE":
+                return "What is the planting date? (e.g. today, yesterday, or YYYY-MM-DD)";
+            case "CROP_HARVEST_DATE":
+                return "What is the expected harvest date? (e.g. in 3 months, 90 days, or YYYY-MM-DD)";
+            case "CROP_VARIETY":
+                return "What variety of crop is this? (e.g. Hybrid, Sharbati, Desi, or type 'Standard')";
             case "CONFIRM_CROP":
-                return "All details are collected. Reply YES to save or NO to cancel.";
+                return "All details are collected. Reply YES to save to your records or NO to cancel.";
             default:
                 return "Please provide the requested crop detail.";
         }
@@ -613,7 +666,7 @@ public class FarmerTextParser {
         return value == null || value.toString().isBlank();
     }
 
-    private String titleCase(String value) {
+    public String titleCase(String value) {
         if (value == null || value.isBlank()) return "";
         String[] words = value.trim().split("\\s+");
         StringBuilder sb = new StringBuilder();
