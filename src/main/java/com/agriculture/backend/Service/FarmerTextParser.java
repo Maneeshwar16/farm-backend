@@ -34,11 +34,11 @@ public class FarmerTextParser {
             return response("GREETING",
                     "Namaste! 🌱 I am your smart **Farmer Assistant**.\n\n" +
                             "Here is what I can do for you:\n\n" +
-                            "🌾 **Crops**: *\"I am planting 5 acres of wheat\"*, *\"Show my crops\"*, *\"Delete crop Tomato\"*\n" +
+                            "🌾 **Crops**: *\"I am planting 5 acres of wheat\"*, *\"Edit my crop\"*, *\"Show my crops\"*, *\"Delete crop Tomato\"*\n" +
                             "🚜 **Farms**: *\"Add farm Green Valley in 10 acres at Guntur\"*, *\"Show my farms\"*, *\"Delete farm\"*\n" +
                             "🌾 **Harvests**: *\"Record harvest\"*, *\"My harvests\"*\n" +
                             "🧺 **Products**: *\"Sell 100 kg of potatoes at ₹25\"*, *\"Existing stock\"*, *\"Delete product Tomato\"*\n" +
-                            "📦 **Orders**: *\"Show my orders\"*, *\"Cancelled orders\"*, *\"Pending orders\"*\n" +
+                            "📦 **Orders**: *\"Show my orders\"*, *\"Change my order to shipped\"*, *\"Pending orders\"*\n" +
                             "💰 **Expenses**: *\"I spent ₹500 on fertilizer\"*, *\"My expenses\"*, *\"Total spent\"*\n\n" +
                             "What would you like to do today?");
         }
@@ -73,6 +73,13 @@ public class FarmerTextParser {
                 result.getData().put("target", target);
             }
             result.setNextStep("CONFIRM_CROP_DELETE");
+            return result;
+        }
+
+        // 4b. Check for crop status update
+        if (isCropStatusUpdate(text)) {
+            AssistantResponse result = response("CROP_STATUS_UPDATE", "Which crop's status would you like to update?");
+            result.setNextStep("CROP_STATUS_TARGET");
             return result;
         }
 
@@ -143,6 +150,13 @@ public class FarmerTextParser {
             return result;
         }
 
+        // 9b. Check for order status update
+        if (isOrderStatusUpdate(text)) {
+            AssistantResponse result = response("ORDER_STATUS_UPDATE", "Which customer order would you like to update?");
+            result.setNextStep("ORDER_STATUS_TARGET");
+            return result;
+        }
+
         return response("UNKNOWN",
                 "I can help you add or delete crops, manage farms, list products, record expenses, record harvests, and view your customer orders.\n\n" +
                         "Try:\n" +
@@ -161,6 +175,9 @@ public class FarmerTextParser {
     public boolean isOrderQuery(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT).trim();
+        if (isOrderStatusUpdate(lower)) {
+            return false;
+        }
         if (lower.equals("orders") || lower.equals("order") || lower.equals("my orders")
                 || lower.equals("show orders") || lower.equals("show my orders")
                 || lower.equals("view orders") || lower.equals("list orders")
@@ -174,6 +191,41 @@ public class FarmerTextParser {
         boolean hasOrder = containsAny(lower, "order", "orders");
         boolean hasQuery = containsAny(lower, "my", "show", "list", "view", "check", "all", "what", "any", "cancel", "cancelled", "canceled", "pending", "status", "delivered", "shipped", "recent", "customer");
         return hasOrder && hasQuery;
+    }
+
+    public boolean isOrderStatusUpdate(String text) {
+        if (text == null || text.isBlank()) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+
+        if (lower.startsWith("what") || lower.startsWith("show") || lower.startsWith("view")
+                || lower.startsWith("check") || lower.startsWith("list") || lower.startsWith("how")
+                || lower.equals("orders") || lower.equals("my orders") || lower.equals("shipped orders")
+                || lower.equals("pending orders") || lower.equals("delivered orders")
+                || lower.equals("cancelled orders") || lower.equals("canceled orders")) {
+            return false;
+        }
+
+        boolean hasOrder = containsAny(lower, "order", "orders");
+        boolean hasAction = containsAny(lower, "change", "update", "set", "mark", "modify", "switch", "turn");
+
+        if (hasOrder && hasAction) {
+            return true;
+        }
+
+        if (containsAny(lower, "to shipped", "to delivered", "to processing", "to cancelled", "to canceled",
+                "as shipped", "as delivered", "as processing", "as cancelled", "as canceled")) {
+            return true;
+        }
+
+        if (lower.matches("(?i).*\\b(?:ship|deliver|cancel)\\s+(?:all\\s+)?(?:my\\s+)?(?:order|orders)(?:\\s+#?\\d+)?.*")) {
+            return true;
+        }
+
+        if (lower.matches("(?i).*\\bcancel\\s+(?:my\\s+)?order(?:\\s+#?\\d+)?.*")) {
+            return true;
+        }
+
+        return false;
     }
 
     public boolean isGreeting(String text) {
@@ -268,12 +320,47 @@ public class FarmerTextParser {
     public boolean isCropCreate(String text) {
         if (text == null) return false;
         String lower = text.toLowerCase(Locale.ROOT);
-        if (isCropDelete(lower) || isFarmCreate(lower) || isFarmDelete(lower)) return false;
+        if (isCropDelete(lower) || isCropStatusUpdate(lower) || isFarmCreate(lower) || isFarmDelete(lower)) return false;
         return containsAny(lower,
                 "plant", "planting", "planted",
                 "grow", "growing",
                 "add crop", "new crop", "record crop", "register crop",
                 "sow", "sowing", "sowed", "cultivate", "cultivating");
+    }
+
+    public boolean isCropStatusUpdate(String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(Locale.ROOT).trim();
+
+        if (lower.startsWith("what is") || lower.startsWith("what are") || lower.startsWith("show")
+                || lower.startsWith("check") || lower.startsWith("view") || lower.startsWith("list")
+                || lower.startsWith("how is") || lower.startsWith("how are") || lower.contains("what's")) {
+            return false;
+        }
+
+        if (lower.contains("edit my crop") || lower.contains("edit crop") || lower.contains("edit crops")
+                || lower.contains("modify my crop") || lower.contains("modify crop")
+                || lower.contains("change my crop") || lower.contains("change crop")
+                || lower.contains("update my crop") || lower.contains("update crop")) {
+            return true;
+        }
+
+        if (containsAny(lower, "change status", "update status", "edit status", "set status", "modify status", "mark status")) {
+            return true;
+        }
+
+        if ((lower.contains("crop") || lower.contains("crops") || lower.contains("stage"))
+                && containsAny(lower, "status", "stage")
+                && containsAny(lower, "change", "update", "set", "edit", "modify", "mark", "switch", "progress", "advance", "next")) {
+            return true;
+        }
+
+        if (containsAny(lower, "mark as", "mark crop", "set crop", "move crop", "change to", "update to")
+                && containsAny(lower, "harvest", "vegetat", "flower", "reproduct", "maturat", "ripen", "sprout", "emergence", "seeded", "plant", "prep")) {
+            return true;
+        }
+
+        return false;
     }
 
     public String extractCropDeleteTarget(String message) {

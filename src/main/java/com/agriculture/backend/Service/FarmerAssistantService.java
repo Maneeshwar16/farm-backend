@@ -43,6 +43,16 @@ public class FarmerAssistantService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
 
+    private static final List<String> CROP_STAGES = List.of(
+            "Land Preparation",
+            "Seeded / Planted",
+            "Pre-Emergence",
+            "Emergence / Sprouting",
+            "Vegetative Stage",
+            "Flowering / Reproductive Stage",
+            "Maturation / Ripening",
+            "Harvested");
+
     private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
 
     public FarmerAssistantService(
@@ -144,6 +154,11 @@ public class FarmerAssistantService {
             return startCropDeleteConversation(farmerId, target);
         }
 
+        // 2b. Crop status update / edit crop request ("edit my crop", "update crop status", "mark crop as harvested")
+        if (isCropStatusUpdateRequest(lower)) {
+            return startCropStatusUpdateConversation(farmerId, text);
+        }
+
         // 3. Product deletion request
         if (containsAny(lower, "delete product", "remove product", "delete listing", "remove listing")) {
             Matcher m = Pattern.compile(
@@ -222,6 +237,10 @@ public class FarmerAssistantService {
         if ("CROP_DELETE".equals(parsed.getIntent())) {
             String target = parsed.getData() != null ? String.valueOf(parsed.getData().get("target")) : null;
             return startCropDeleteConversation(farmerId, target);
+        }
+
+        if ("CROP_STATUS_UPDATE".equals(parsed.getIntent())) {
+            return startCropStatusUpdateConversation(farmerId, text);
         }
 
         if ("CROP_CREATE".equals(parsed.getIntent())) {
@@ -499,6 +518,195 @@ public class FarmerAssistantService {
         }
         sb.append("\nOr reply **NO** to cancel.");
         return question(c, id, sb.toString());
+    }
+
+    // ---------------------------------------------------------
+    // CROP STATUS UPDATE FLOW
+    // ---------------------------------------------------------
+
+    private AssistantResponse startCropStatusUpdateConversation(Long farmerId, String text) {
+        List<Crop> crops = cropRepository.findByFarmerId(farmerId);
+        if (crops.isEmpty()) {
+            return response(
+                    "CROP_STATUS_UPDATE",
+                    "🌱 You don't have any registered crop records to update. Add a crop first!");
+        }
+
+        String lower = text.toLowerCase(Locale.ROOT);
+        Crop matchedCrop = null;
+
+        // Try extracting numeric ID e.g. "crop 60018", "#60018", "id: 60018"
+        Matcher idMatcher = Pattern.compile("(?i)(?:id\\s*[:#]?\\s*|#|crop\\s+)(\\d+)").matcher(text);
+        if (idMatcher.find()) {
+            try {
+                Long numId = Long.parseLong(idMatcher.group(1));
+                for (Crop c : crops) {
+                    if (c.getId().equals(numId)) {
+                        matchedCrop = c;
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        // Try matching by crop name in text
+        if (matchedCrop == null) {
+            for (Crop c : crops) {
+                if (c.getCropName() != null && !c.getCropName().isBlank()) {
+                    String cName = c.getCropName().toLowerCase(Locale.ROOT);
+                    if (lower.contains(cName)) {
+                        matchedCrop = c;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If farmer has only 1 crop, auto-select it
+        if (matchedCrop == null && crops.size() == 1) {
+            matchedCrop = crops.get(0);
+        }
+
+        String newStatus = extractStatusFromText(text);
+
+        Conversation c = new Conversation(farmerId, "CROP_STATUS_UPDATE");
+        String id = UUID.randomUUID().toString();
+
+        if (matchedCrop != null) {
+            String currentStatus = matchedCrop.getCropStatus() != null ? matchedCrop.getCropStatus() : "Seeded / Planted";
+            c.data.put("cropId", matchedCrop.getId());
+            c.data.put("cropName", matchedCrop.getCropName());
+            c.data.put("currentStatus", currentStatus);
+
+            if (newStatus != null) {
+                if (newStatus.equalsIgnoreCase(currentStatus)) {
+                    return response(
+                            "CROP_STATUS_UPDATE",
+                            "🌱 Crop **" + matchedCrop.getCropName() + "** is already in stage **" + newStatus + "**.");
+                }
+                c.data.put("newStatus", newStatus);
+                c.step = "CONFIRM_CROP_STATUS";
+                conversations.put(id, c);
+
+                AssistantResponse res = question(
+                        c, id,
+                        "🌾 Please confirm updating status of crop **" + matchedCrop.getCropName() +
+                                "** (ID: #" + matchedCrop.getId() + ") from **" + currentStatus + "** to **" + newStatus + "**?\n\n" +
+                                "Reply **YES** to save to your records or **NO** to cancel.");
+                res.setRequiresConfirmation(true);
+                res.setNextStep("CONFIRM_CROP_STATUS");
+                return res;
+            } else {
+                c.step = "CROP_NEW_STATUS";
+                conversations.put(id, c);
+                return question(c, id, buildStageSelectionPrompt(matchedCrop));
+            }
+        }
+
+        c.step = "CROP_STATUS_TARGET";
+        conversations.put(id, c);
+
+        StringBuilder sb = new StringBuilder(
+                "🌾 Which crop's status would you like to update? Enter the crop name, ID, or option number:\n\n");
+        int idx = 1;
+        for (Crop crop : crops) {
+            sb.append(idx++).append(". **").append(crop.getCropName()).append("** (ID: #").append(crop.getId())
+                    .append(", Current Status: **")
+                    .append(crop.getCropStatus() != null ? crop.getCropStatus() : "Seeded / Planted").append("**)\n");
+        }
+        sb.append("\nOr reply **NO** to cancel.");
+        return question(c, id, sb.toString());
+    }
+
+    private String buildStageSelectionPrompt(Crop crop) {
+        String current = crop.getCropStatus() != null ? crop.getCropStatus() : "Seeded / Planted";
+        return "🌾 Selected crop: **" + crop.getCropName() + "** (ID: #" + crop.getId()
+                + ", Current Status: **" + current + "**)\n\n"
+                + "Please choose the new stage for this crop:\n\n"
+                + "1. Land Preparation\n"
+                + "2. Seeded / Planted\n"
+                + "3. Pre-Emergence\n"
+                + "4. Emergence / Sprouting\n"
+                + "5. Vegetative Stage\n"
+                + "6. Flowering / Reproductive Stage\n"
+                + "7. Maturation / Ripening\n"
+                + "8. Harvested\n\n"
+                + "*(Reply with the number 1-8 or the stage name, or reply **NO** to cancel)*";
+    }
+
+    private String normalizeCropStatus(String input) {
+        if (input == null || input.isBlank()) {
+            return null;
+        }
+        String clean = input.trim();
+
+        // 1. Direct number 1 to 8
+        switch (clean) {
+            case "1": return "Land Preparation";
+            case "2": return "Seeded / Planted";
+            case "3": return "Pre-Emergence";
+            case "4": return "Emergence / Sprouting";
+            case "5": return "Vegetative Stage";
+            case "6": return "Flowering / Reproductive Stage";
+            case "7": return "Maturation / Ripening";
+            case "8": return "Harvested";
+            default: break;
+        }
+
+        String lower = clean.toLowerCase(Locale.ROOT);
+
+        // 2. Exact match against the 8 stages
+        for (String stage : CROP_STAGES) {
+            if (stage.equalsIgnoreCase(clean) || lower.equals(stage.toLowerCase(Locale.ROOT))) {
+                return stage;
+            }
+        }
+
+        // 3. Stage-specific keywords
+        if (lower.contains("harvest")) {
+            return "Harvested";
+        }
+        if (lower.contains("flower") || lower.contains("reproduct") || lower.contains("bloom")) {
+            return "Flowering / Reproductive Stage";
+        }
+        if (lower.contains("matur") || lower.contains("ripen") || lower.contains("ripe")) {
+            return "Maturation / Ripening";
+        }
+        if (lower.contains("vegetat")) {
+            return "Vegetative Stage";
+        }
+        if (lower.contains("pre-emergence") || lower.contains("pre emergence") || lower.contains("germinat")) {
+            return "Pre-Emergence";
+        }
+        if (lower.contains("sprout") || (lower.contains("emergence") && !lower.contains("pre"))) {
+            return "Emergence / Sprouting";
+        }
+        if (lower.contains("seeded") || lower.contains("planted") || lower.contains("seeding") || lower.equals("seeded / planted")) {
+            return "Seeded / Planted";
+        }
+        if (lower.contains("preparation") || lower.contains("land prep") || lower.equals("prep")) {
+            return "Land Preparation";
+        }
+
+        return null;
+    }
+
+    private String extractStatusFromText(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+
+        // Check if there is "to <stage>" or "as <stage>"
+        Matcher mTo = Pattern.compile("(?i)(?:to|as|into|set to|stage to|status to)\\s+([a-zA-Z0-9\\s/]+)").matcher(text);
+        if (mTo.find()) {
+            String candidate = normalizeCropStatus(mTo.group(1).trim());
+            if (candidate != null) {
+                return candidate;
+            }
+        }
+
+        return normalizeCropStatus(text);
     }
 
     // ---------------------------------------------------------
@@ -877,6 +1085,113 @@ public class FarmerAssistantService {
             }
         }
 
+        if (c.intent.equals("CROP_STATUS_UPDATE")) {
+            List<Crop> crops = cropRepository.findByFarmerId(c.farmerId);
+
+            if ("CROP_STATUS_TARGET".equals(c.step)) {
+                Crop matched = null;
+                String aTrim = answer.trim();
+
+                // 1. Check numeric ID or 1-based index
+                try {
+                    String cleanNum = aTrim.replaceAll("[^0-9]", "");
+                    if (!cleanNum.isBlank()) {
+                        long num = Long.parseLong(cleanNum);
+                        for (Crop cr : crops) {
+                            if (cr.getId().equals(num)) {
+                                matched = cr;
+                                break;
+                            }
+                        }
+                        if (matched == null && num >= 1 && num <= crops.size()) {
+                            matched = crops.get((int) num - 1);
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+
+                // 2. Check name
+                if (matched == null) {
+                    String aLower = aTrim.toLowerCase(Locale.ROOT);
+                    for (Crop cr : crops) {
+                        if (cr.getCropName() != null) {
+                            String cName = cr.getCropName().toLowerCase(Locale.ROOT);
+                            if (cName.equals(aLower) || cName.contains(aLower) || aLower.contains(cName)) {
+                                matched = cr;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (matched == null) {
+                    return question(c, id, "I couldn't find a crop matching \"" + answer
+                            + "\". Please enter a valid crop name, ID, or option number from the list above, or reply **NO** to cancel.");
+                }
+
+                String currentStatus = matched.getCropStatus() != null ? matched.getCropStatus() : "Seeded / Planted";
+                c.data.put("cropId", matched.getId());
+                c.data.put("cropName", matched.getCropName());
+                c.data.put("currentStatus", currentStatus);
+
+                // In case the user answered both crop and status (e.g. "Vercel Crop to Vegetative Stage")
+                String inlineStatus = extractStatusFromText(answer);
+                if (inlineStatus != null && !inlineStatus.equalsIgnoreCase(currentStatus)) {
+                    c.data.put("newStatus", inlineStatus);
+                    c.step = "CONFIRM_CROP_STATUS";
+
+                    AssistantResponse res = question(
+                            c, id,
+                            "🌾 Please confirm updating status of crop **" + matched.getCropName() +
+                                    "** (ID: #" + matched.getId() + ") from **" + currentStatus + "** to **" + inlineStatus + "**?\n\n" +
+                                    "Reply **YES** to save to your records or **NO** to cancel.");
+                    res.setRequiresConfirmation(true);
+                    res.setNextStep("CONFIRM_CROP_STATUS");
+                    return res;
+                }
+
+                c.step = "CROP_NEW_STATUS";
+                return question(c, id, buildStageSelectionPrompt(matched));
+            }
+
+            if ("CROP_NEW_STATUS".equals(c.step)) {
+                String normalized = normalizeCropStatus(answer);
+                if (normalized == null) {
+                    return question(c, id, "Please choose a valid stage from 1 to 8 (e.g. 5 or Vegetative Stage):\n\n"
+                            + "1. Land Preparation\n"
+                            + "2. Seeded / Planted\n"
+                            + "3. Pre-Emergence\n"
+                            + "4. Emergence / Sprouting\n"
+                            + "5. Vegetative Stage\n"
+                            + "6. Flowering / Reproductive Stage\n"
+                            + "7. Maturation / Ripening\n"
+                            + "8. Harvested\n\n"
+                            + "Or reply **NO** to cancel.");
+                }
+
+                Object currStatus = c.data.get("currentStatus");
+                if (normalized.equalsIgnoreCase(String.valueOf(currStatus))) {
+                    return question(c, id, "🌱 Crop **" + c.data.get("cropName") + "** is already in stage **"
+                            + normalized + "**. Please choose a different stage from 1 to 8, or reply **NO** to cancel.");
+                }
+
+                c.data.put("newStatus", normalized);
+                c.step = "CONFIRM_CROP_STATUS";
+
+                String cropName = String.valueOf(c.data.get("cropName"));
+                Object cropId = c.data.get("cropId");
+
+                AssistantResponse res = question(
+                        c, id,
+                        "🌾 Please confirm updating status of crop **" + cropName +
+                                "** (ID: #" + cropId + ") from **" + currStatus + "** to **" + normalized + "**?\n\n" +
+                                "Reply **YES** to save to your records or **NO** to cancel.");
+                res.setRequiresConfirmation(true);
+                res.setNextStep("CONFIRM_CROP_STATUS");
+                return res;
+            }
+        }
+
         if (c.intent.equals("PRODUCT_DELETE")) {
             if ("PRODUCT_DELETE_TARGET".equals(c.step)) {
                 List<Product> products = productRepository.findByFarmerId(c.farmerId);
@@ -1239,6 +1554,26 @@ public class FarmerAssistantService {
                     "CROP_DELETED",
                     "🗑️ Crop **" + cropName + "** (ID: #" + cropId
                             + ") has been deleted successfully from your farm records.",
+                    id);
+        }
+
+        if (c.intent.equals("CROP_STATUS_UPDATE")) {
+            Long cropId = ((Number) c.data.get("cropId")).longValue();
+            String newStatus = String.valueOf(c.data.get("newStatus"));
+
+            Crop crop = cropRepository.findById(cropId).orElse(null);
+            if (crop != null && crop.getFarmerId().equals(c.farmerId)) {
+                crop.setCropStatus(newStatus);
+                cropRepository.save(crop);
+            }
+            conversations.remove(id);
+
+            String cropName = crop != null ? crop.getCropName() : String.valueOf(c.data.get("cropName"));
+            return completed(
+                    "CROP_STATUS_UPDATED",
+                    "✅ Status for crop **" + cropName + "** (ID: #" + cropId
+                            + ") has been updated to **" + newStatus + "**!\n\n"
+                            + "This update is now reflected in your **My Crops** dashboard.",
                     id);
         }
 
@@ -1761,7 +2096,7 @@ public class FarmerAssistantService {
         }
 
         answer.append(
-                "💡 *You can ask me to add a crop (e.g. \"I am planting 5 acres of wheat\"), delete a crop (e.g. \"delete crop Tomato\"), or record a harvest.*");
+                "💡 *You can ask me to add a crop (e.g. \"I am planting 5 acres of wheat\"), edit crop status (e.g. \"edit my crop\" or \"update crop status\"), delete a crop, or record a harvest.*");
 
         return response("CROPS", answer.toString());
     }
@@ -2091,7 +2426,7 @@ public class FarmerAssistantService {
         }
         String lower = text.toLowerCase(Locale.ROOT).trim();
 
-        if (parser.isCropDelete(lower) || parser.isCropCreate(lower)) {
+        if (parser.isCropDelete(lower) || parser.isCropCreate(lower) || isCropStatusUpdateRequest(lower)) {
             return false;
         }
 
@@ -2115,6 +2450,10 @@ public class FarmerAssistantService {
                 "check", "get", "see", "any", "find", "all", "summary");
 
         return (mentionsCrop && asksForRecords) || lower.contains("my crop") || lower.contains("my crops");
+    }
+
+    private boolean isCropStatusUpdateRequest(String text) {
+        return parser.isCropStatusUpdate(text);
     }
 
     private boolean isHarvestRequest(String text) {
@@ -2147,7 +2486,7 @@ public class FarmerAssistantService {
             return true;
         if (parser.isHarvestQuery(lower))
             return true;
-        if (isCropQuery(lower) || parser.isCropDelete(lower) || parser.isCropCreate(lower))
+        if (isCropQuery(lower) || parser.isCropDelete(lower) || parser.isCropCreate(lower) || isCropStatusUpdateRequest(lower))
             return true;
         if (isExpenseSummaryQuestion(lower))
             return true;
